@@ -9,10 +9,11 @@
       ]
     },
     {
-      "name": "Server 2",
-      "address": "192.168.1.50:3121",
+      "name": "piro-office-pc (130.242.128.189:1534)",
+      "address": "130.242.128.189:1534",
       "targets": [
-        { "target": "xilinx_tcf/Digilent/210249B08000", "device": "xcku035_1" }
+        { "target": "xilinx_tcf/Digilent/210249B06E36", "device": "xcku035" },
+        { "target": "xilinx_tcf/Digilent/210249B07138", "device": "xcku035" }
       ]
     }
   ],

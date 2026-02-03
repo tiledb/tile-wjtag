@@ -5,6 +5,9 @@ import json
 # Import the two tabs
 from tabs import program_xilinx_fpga
 from tabs import program_xilinx_fpga_flash
+from tabs import xilinx_tests
+from flask import stream_with_context, Response, jsonify
+
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config/programming_servers.json")
 
@@ -105,6 +108,23 @@ def upload_binfile():
         program_xilinx_fpga_flash.enqueue_job(job_config),
         mimetype='text/plain'
     )
+
+
+
+
+@app.route('/list_hw', methods=['POST'])
+def list_hw():
+    hw_server = request.form.get("hw_server")
+
+    def generate():
+        for item in xilinx_tests.enqueue_hw_list(hw_server):
+            # item can be string (old behavior) or dict (new tree)
+            if isinstance(item, dict):
+                yield json.dumps(item) + "\n"
+            else:
+                yield json.dumps({"type": "log", "line": item}) + "\n"
+
+    return Response(stream_with_context(generate()), mimetype='application/json')
 
 
 if __name__ == '__main__':

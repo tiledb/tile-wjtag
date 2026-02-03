@@ -59,6 +59,18 @@
             Program Flash Memory
           </button>
         </li>
+        <li class="nav-item" role="presentation">
+          <button
+            class="nav-link"
+            id="tests-tab"
+            data-bs-toggle="tab"
+            data-bs-target="#tests"
+            type="button"
+            role="tab"
+          >
+            Xilinx Tests
+          </button>
+        </li>
       </ul>
 
       <div class="tab-content mt-3">
@@ -147,6 +159,26 @@
           </form>
           <pre
             id="flash-output"
+            class="mt-3 bg-light p-2"
+            style="height: 300px; overflow: auto"
+          ></pre>
+        </div>
+
+        <!-- ----- Tab 3: Xilinx Tests ---- -->
+        <div class="tab-pane fade" id="tests" role="tabpanel">
+          <form id="tests-form">
+            <input type="hidden" name="hw_server" id="hidden_hw_server_tests" />
+            <button type="submit" class="btn btn-primary">List all</button>
+          </form>
+          <h5 class="mt-3">Hardware Tree</h5>
+          <div
+            id="tests-tree"
+            class="border p-2"
+            style="max-height: 300px; overflow: auto"
+          ></div>
+
+          <pre
+            id="tests-output"
             class="mt-3 bg-light p-2"
             style="height: 300px; overflow: auto"
           ></pre>
