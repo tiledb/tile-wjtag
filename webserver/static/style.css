@@ -1,0 +1,15 @@
+ul.nested {
+  display: none;
+  list-style-type: none;
+  padding-left: 1em;
+}
+
+ul.nested.active {
+  display: block;
+}
+
+.toggle {
+  cursor: pointer;
+  user-select: none;
+  margin-right: 0.3em;
+}

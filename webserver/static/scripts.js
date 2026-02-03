@@ -4,7 +4,7 @@
 const hwServerSelect = document.getElementById("hw_server");
 const hiddenFpga = document.getElementById("hidden_hw_server_fpga");
 const hiddenFlash = document.getElementById("hidden_hw_server_flash");
-const hiddenTests = document.getElementById("hidden_hw_server_tests"); // new hidden field
+const hiddenTests = document.getElementById("hidden_hw_server_tests");
 
 // Initialize hidden fields with first selection
 hiddenFpga.value = hwServerSelect.value;
@@ -30,12 +30,7 @@ function streamForm(formId, outputId, url, jsonCallback = null) {
     output.textContent = "";
 
     const formData = new FormData(form);
-
-    const response = await fetch(url, {
-      method: "POST",
-      body: formData,
-    });
-
+    const response = await fetch(url, { method: "POST", body: formData });
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
@@ -46,7 +41,7 @@ function streamForm(formId, outputId, url, jsonCallback = null) {
 
       buffer += decoder.decode(value, { stream: true });
       let lines = buffer.split("\n");
-      buffer = lines.pop(); // incomplete line
+      buffer = lines.pop(); // keep incomplete line
 
       for (const line of lines) {
         if (!line.trim()) continue;
@@ -55,8 +50,7 @@ function streamForm(formId, outputId, url, jsonCallback = null) {
         try {
           parsed = JSON.parse(line);
         } catch {
-          // fallback if not JSON
-          parsed = { type: "log", line: line };
+          parsed = { type: "log", line: line }; // fallback
         }
 
         if (parsed.type === "log") {
@@ -64,13 +58,11 @@ function streamForm(formId, outputId, url, jsonCallback = null) {
           output.scrollTop = output.scrollHeight;
         }
 
-        if (jsonCallback) {
-          jsonCallback(parsed);
-        }
+        if (jsonCallback) jsonCallback(parsed);
       }
     }
 
-    // Process any leftover
+    // Process leftover
     if (buffer.trim()) {
       try {
         const parsed = JSON.parse(buffer);
@@ -85,23 +77,44 @@ function streamForm(formId, outputId, url, jsonCallback = null) {
 }
 
 // ==========================
-// Helper to render tree as HTML
+// Collapsible tree with icons
 // ==========================
 function renderTree(tree) {
-  let html = `<ul><li>${tree.server}`;
-  if (tree.targets && tree.targets.length) {
-    html += "<ul>";
-    for (const t of tree.targets) {
-      html += `<li>${t.name}<ul>`;
-      for (const d of t.devices) {
-        html += `<li>${d}</li>`;
+  function renderNode(node) {
+    if (node.devices) {
+      // Target node
+      let html = `<li><span class="toggle">▶</span> 🎯 ${node.name}<ul class="nested">`;
+      for (const d of node.devices) {
+        html += `<li>⚙️ ${d}</li>`; // device icon
       }
       html += "</ul></li>";
+      return html;
+    } else if (node.server) {
+      // Server root
+      let html = `<ul><li><span class="toggle">▶</span> 🖥️ ${node.server}<ul class="nested">`;
+      for (const t of node.targets) {
+        html += renderNode(t);
+      }
+      html += "</ul></li></ul>";
+      return html;
     }
-    html += "</ul>";
+    return "";
   }
-  html += "</li></ul>";
-  return html;
+
+  const container = document.getElementById("tests-tree");
+  container.innerHTML = renderNode(tree);
+
+  // Add toggle click events
+  const toggles = container.querySelectorAll(".toggle");
+  toggles.forEach((t) => {
+    t.addEventListener("click", function () {
+      const nested = this.parentElement.querySelector(".nested");
+      if (nested) {
+        nested.classList.toggle("active");
+        this.textContent = nested.classList.contains("active") ? "▼" : "▶";
+      }
+    });
+  });
 }
 
 // ==========================
@@ -111,7 +124,6 @@ streamForm("fpga-form", "fpga-output", "/program_fpga");
 streamForm("flash-form", "flash-output", "/program_flash");
 streamForm("tests-form", "tests-output", "/list_hw", (item) => {
   if (item.type === "tree") {
-    const treeDiv = document.getElementById("tests-tree");
-    treeDiv.innerHTML = renderTree(item.tree);
+    renderTree(item.tree);
   }
 });
