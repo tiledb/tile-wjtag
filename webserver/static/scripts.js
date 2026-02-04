@@ -16,6 +16,9 @@ hwServerSelect.addEventListener("change", () => {
   hiddenFpga.value = hwServerSelect.value;
   hiddenFlash.value = hwServerSelect.value;
   hiddenTests.value = hwServerSelect.value;
+
+  loadTargetsForServer(hwServerSelect.value);
+  loadFlashTargetsForServer(hwServerSelect.value);
 });
 
 // ==========================
@@ -127,3 +130,102 @@ streamForm("tests-form", "tests-output", "/list_hw", (item) => {
     renderTree(item.tree);
   }
 });
+
+
+// ==========================
+// Load FPGA Targets Dynamically
+// ==========================
+
+const targetsContainer = document.getElementById("fpga-targets-container");
+
+async function loadTargetsForServer(serverAddress) {
+  targetsContainer.innerHTML = "Loading targets...";
+
+  const formData = new FormData();
+  formData.append("hw_server", serverAddress);
+
+  const response = await fetch("/get_targets", {
+    method: "POST",
+    body: formData
+  });
+
+  const data = await response.json();
+
+  targetsContainer.innerHTML = "";
+
+  if (!data.targets || data.targets.length === 0) {
+    targetsContainer.innerHTML = "<i>No targets configured.</i>";
+    return;
+  }
+
+  data.targets.forEach((t, index) => {
+    const id = `target_${index}`;
+
+    const div = document.createElement("div");
+    div.className = "form-check";
+
+    div.innerHTML = `
+      <input class="form-check-input" type="checkbox"
+             name="selected_targets"
+             value="${t.target}|${t.device}"
+             id="${id}" checked>
+      <label class="form-check-label" for="${id}">
+        ${t.target} — ${t.device}
+      </label>
+    `;
+
+    targetsContainer.appendChild(div);
+  });
+}
+// Load targets initially
+loadTargetsForServer(hwServerSelect.value);
+
+
+// ==========================
+// Load Flash Targets Dynamically
+// ==========================
+
+const flashTargetsContainer = document.getElementById("flash-targets-container");
+
+async function loadFlashTargetsForServer(serverAddress) {
+  flashTargetsContainer.innerHTML = "Loading targets...";
+
+  const formData = new FormData();
+  formData.append("hw_server", serverAddress);
+
+  const response = await fetch("/get_targets", {
+    method: "POST",
+    body: formData
+  });
+
+  const data = await response.json();
+
+  flashTargetsContainer.innerHTML = "";
+
+  if (!data.targets || data.targets.length === 0) {
+    flashTargetsContainer.innerHTML = "<i>No targets configured.</i>";
+    return;
+  }
+
+  data.targets.forEach((t, index) => {
+    const id = `flash_target_${index}`;
+
+    const div = document.createElement("div");
+    div.className = "form-check";
+
+    div.innerHTML = `
+      <input class="form-check-input"
+             type="checkbox"
+             name="selected_flash_targets"
+             value="${t.target}|${t.device}"
+             id="${id}" checked>
+      <label class="form-check-label" for="${id}">
+        ${t.target} — ${t.device}
+      </label>
+    `;
+
+    flashTargetsContainer.appendChild(div);
+  });
+}
+// Load flash targets initially
+loadFlashTargetsForServer(hwServerSelect.value);

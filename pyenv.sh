@@ -1,25 +1,20 @@
 #!/bin/bash
-
-# Exit on any error
+# Exit immediately if a command exits with a non-zero status
 # set -e
 
-# Check if python3 is installed
-if ! command -v python3 &> /dev/null
-then
-    echo "python3 is not installed. Please install Python 3 first."
-    exit 1
+
+# Install Python 3 and venv if not installed
+if ! command -v python3 &> /dev/null; then
+    # Update package lists
+    sudo apt update
+    echo "Python 3 is not installed. Installing..."
+    sudo apt install -y python3 python3-venv python3-distutils python3-pip
 fi
 
-# Check if pip is installed
-if ! python3 -m pip --version &> /dev/null
-then
-    echo "pip is not installed. Installing pip..."
-    curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py
-    python3 get-pip.py
-    rm get-pip.py
-fi
+# Check Python version
+python3 --version
 
-# Create virtual environment
+# Create virtual environment if it doesn't exist
 if [ ! -d ".pyenv" ]; then
     python3 -m venv .pyenv
     echo "Virtual environment '.pyenv' created."
@@ -39,5 +34,3 @@ pip install flask
 
 echo "Setup complete. To activate the environment, run:"
 echo "source .pyenv/bin/activate"
-
-# deactivate

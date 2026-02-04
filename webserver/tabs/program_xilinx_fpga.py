@@ -19,7 +19,7 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(LOG_FOLDER, exist_ok=True)
 os.makedirs(TCL_FOLDER, exist_ok=True)
 
-VIVADO_SETTINGS = "/tools/Xilinx/Vivado/2022.2/settings64.sh"
+VIVADO_SETTINGS = "/tools/Xilinx/Vivado_Lab/2022.2/settings64.sh"
 SCRIPT_NAME = "program-xilinx-fpga"
 
 job_queue = queue.Queue()
@@ -165,24 +165,27 @@ def stream_vivado(job_config):
     try:
         tcl_path = generate_tcl_script(job_config, timestamp)
 
-        yield f"Log file: {log_path}\n"
-        yield f"TCL file: {tcl_path}\n\n"
+        yield {"type": "log", "line": f"Log file: {log_path}\n"}
+        yield {"type": "log", "line": f"TCL file: {tcl_path}\n\n"}
 
         with open(log_path, "w") as logfile:
 
             def write_and_yield(text):
                 logfile.write(text)
                 logfile.flush()
-                return text if not text.lstrip().startswith("#") else None
+                if not text.lstrip().startswith("#"):
+                    return {"type": "log", "line": text}
+                return None
 
             if not os.path.exists(VIVADO_SETTINGS):
-                yield write_and_yield(f"ERROR: Vivado settings file not found: {VIVADO_SETTINGS}\n")
+                yield {"type": "log", "line":
+                       f"ERROR: Vivado settings file not found: {VIVADO_SETTINGS}\n"}
                 return
 
             cmd = (
                 "bash -c '"
                 f"source {VIVADO_SETTINGS} && "
-                f"vivado -mode batch -nojournal -nolog -source {tcl_path}"
+                f"vivado_lab -mode batch -nojournal -nolog -source {tcl_path}"
                 "'"
             )
 
@@ -196,20 +199,21 @@ def stream_vivado(job_config):
             )
 
             for line in iter(process.stdout.readline, ''):
-                visible_line = write_and_yield(line)
-                if visible_line:
-                    yield visible_line
+                result = write_and_yield(line)
+                if result:
+                    yield result
 
             process.stdout.close()
             process.wait()
-            yield write_and_yield("\n===== FPGA Programming Finished =====\n")
+
+            yield {"type": "log",
+                   "line": "\n===== FPGA Programming Finished =====\n"}
 
     except Exception:
         error_text = "\n===== Python Exception =====\n" + traceback.format_exc()
-        yield error_text
+        yield {"type": "log", "line": error_text}
         with open(log_path, "a") as logfile:
             logfile.write(error_text)
-
 
 # ==============================
 # Job Queue

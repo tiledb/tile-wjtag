@@ -11,7 +11,7 @@ from datetime import datetime
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
 LOG_FOLDER = os.path.join(BASE_DIR, "vivado_logs")
 TCL_FOLDER = os.path.join(BASE_DIR, "tcl")
-VIVADO_SETTINGS = "/tools/Xilinx/Vivado/2022.2/settings64.sh"
+VIVADO_SETTINGS = "/tools/Xilinx/Vivado_Lab/2022.2/settings64.sh"
 SCRIPT_NAME = "list-xilinx-targets"
 
 os.makedirs(LOG_FOLDER, exist_ok=True)
@@ -119,7 +119,7 @@ puts "=== Done Listing ==="
         cmd = (
             "bash -c '"
             f"source {VIVADO_SETTINGS} && "
-            f"vivado -mode batch -nojournal -nolog -source {tcl_path}"
+            f"vivado_lab -mode batch -nojournal -nolog -source {tcl_path}"
             "'"
         )
 

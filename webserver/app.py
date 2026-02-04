@@ -68,20 +68,31 @@ def upload_bitfile():
         ltxfile.save(ltx_path)
 
     selected_server = request.form["hw_server"]
-    targets = get_hw_targets_for_server(selected_server)
+    all_targets = get_hw_targets_for_server(selected_server)
 
-    # Build job dictionary
+    selected_raw = request.form.getlist("selected_targets")
+
+    targets = []
+    for entry in selected_raw:
+        target_name, device_name = entry.split("|")
+        for t in all_targets:
+            if t["target"] == target_name and t["device"] == device_name:
+                targets.append(t)
+
+
     job_config = {
         "bit_path": bit_path,
         "ltx_path": ltx_path,
         "hw_server": selected_server,
-        "targets": targets  # list of {"server": "...", "device": "..."} dictionaries
+        "targets": targets
     }
 
-    return Response(
-        program_xilinx_fpga.enqueue_job(job_config),
-        mimetype='text/plain'
-    )
+    def generate():
+        for item in program_xilinx_fpga.enqueue_job(job_config):
+            yield json.dumps(item) + "\n"
+
+    return Response(stream_with_context(generate()),
+                    mimetype='application/json')
 
 
 # ----- Second tab: Program Flash Memory -----
@@ -92,7 +103,17 @@ def upload_binfile():
     binfile.save(bin_path)
 
     selected_server = request.form.get("hw_server")
-    targets = get_hw_targets_for_server(selected_server)
+    all_targets = get_hw_targets_for_server(selected_server)
+
+    selected_raw = request.form.getlist("selected_flash_targets")
+
+    targets = []
+    for entry in selected_raw:
+        target_name, device_name = entry.split("|")
+        for t in all_targets:
+            if t["target"] == target_name and t["device"] == device_name:
+                targets.append(t)
+
 
     job_config = {
         "bin_file": bin_path,
@@ -104,11 +125,12 @@ def upload_binfile():
         "verify": "verify" in request.form,
     }
 
-    return Response(
-        program_xilinx_fpga_flash.enqueue_job(job_config),
-        mimetype='text/plain'
-    )
+    def generate():
+        for item in program_xilinx_fpga_flash.enqueue_job(job_config):
+            yield json.dumps(item) + "\n"
 
+    return Response(stream_with_context(generate()),
+                    mimetype='application/json')
 
 
 
@@ -126,6 +148,13 @@ def list_hw():
 
     return Response(stream_with_context(generate()), mimetype='application/json')
 
+@app.route('/get_targets', methods=['POST'])
+def get_targets():
+    hw_server = request.form.get("hw_server")
+    targets = get_hw_targets_for_server(hw_server)
+    return jsonify({"targets": targets})
+
+
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=True, host='0.0.0.0', port=8080)
