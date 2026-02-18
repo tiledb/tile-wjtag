@@ -6,6 +6,10 @@ import json
 from tabs import program_xilinx_fpga
 from tabs import program_xilinx_fpga_flash
 from tabs import xilinx_tests
+from tabs import program_proasic_fpga
+from tabs import microsemi_tests
+
+
 from flask import stream_with_context, Response, jsonify
 
 
@@ -153,6 +157,64 @@ def get_targets():
     hw_server = request.form.get("hw_server")
     targets = get_hw_targets_for_server(hw_server)
     return jsonify({"targets": targets})
+
+
+
+@app.route('/program_proasic', methods=['POST'])
+def upload_jedfile():
+    jedfile = request.files['jedfile']
+
+    jed_path = os.path.join(program_proasic_fpga.UPLOAD_FOLDER, jedfile.filename)
+    jedfile.save(jed_path)
+
+    selected_server = request.form.get("proasic_server")
+
+    job_config = {
+        "jed_path": jed_path,
+        "server": selected_server
+    }
+
+    def generate():
+        for item in program_proasic_fpga.enqueue_job(job_config):
+            yield json.dumps(item) + "\n"
+
+    return Response(stream_with_context(generate()),
+                    mimetype='application/json')
+
+@app.route('/proasic_action', methods=['POST'])
+def proasic_action():
+
+    hw_server = request.form.get("proasic_server")
+    action = request.form.get("action")
+
+    project_file = None
+    pdb_file = None
+
+    # If user uploaded files
+    if "project_file" in request.files:
+        file = request.files["project_file"]
+        if file.filename != "":
+            path = os.path.join(microsemi_tests.UPLOAD_FOLDER, file.filename)
+            file.save(path)
+            project_file = path
+
+    if "pdb_file" in request.files:
+        file = request.files["pdb_file"]
+        if file.filename != "":
+            path = os.path.join(microsemi_tests.UPLOAD_FOLDER, file.filename)
+            file.save(path)
+            pdb_file = path
+
+    def generate():
+        for item in microsemi_tests.enqueue_flashpro_job(
+                hw_server,
+                action,
+                project_file,
+                pdb_file):
+            yield json.dumps(item) + "\n"
+
+    return Response(stream_with_context(generate()),
+                    mimetype='application/json')
 
 
 

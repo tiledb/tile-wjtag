@@ -11,3 +11,5 @@ vivado_logs/*
 
 # Ignore system files
 .DS_Store
+flashpro_logs/*
+tcl_proasic/*

@@ -18,6 +18,6 @@
     }
   ],
   "proasic_servers": [
-    { "name": "ProASIC Server 1", "address": "localhost:3122" }
+    { "name": "localhost", "address": "localhost:3122" }
   ]
 }

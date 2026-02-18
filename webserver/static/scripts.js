@@ -229,3 +229,116 @@ async function loadFlashTargetsForServer(serverAddress) {
 }
 // Load flash targets initially
 loadFlashTargetsForServer(hwServerSelect.value);
+
+
+function renderProasicTree(tree) {
+    const container = document.getElementById("proasic-tests-tree");
+    container.innerHTML = "";
+
+    const serverNode = document.createElement("div");
+    serverNode.innerHTML = "<b>Server:</b> " + tree.server;
+    container.appendChild(serverNode);
+
+    if (tree.programmers) {
+        tree.programmers.forEach(prg => {
+            const p = document.createElement("div");
+            p.style.marginLeft = "20px";
+            p.textContent = "Programmer: " + prg;
+            container.appendChild(p);
+        });
+    }
+}
+
+// ==============================
+// ProASIC Tests
+// ==============================
+document.getElementById("proasic-tests-form").addEventListener("submit", function (e) {
+    e.preventDefault();   // 🔥 THIS prevents tab reset
+
+    const output = document.getElementById("proasic-tests-output");
+    const treeContainer = document.getElementById("proasic-tests-tree");
+
+    output.textContent = "";
+    treeContainer.innerHTML = "";
+
+    const server = document.getElementById("proasic_server").value;
+    document.getElementById("hidden_proasic_server_tests").value = server;
+
+    const formData = new FormData(this);
+
+    fetch("/list_proasic", {
+        method: "POST",
+        body: formData
+    }).then(response => {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+
+        function read() {
+            reader.read().then(({ done, value }) => {
+                if (done) return;
+
+                const chunk = decoder.decode(value);
+                const lines = chunk.trim().split("\n");
+
+                lines.forEach(line => {
+                    if (!line) return;
+                    const data = JSON.parse(line);
+
+                    if (data.type === "log") {
+                        output.textContent += data.line;
+                        output.scrollTop = output.scrollHeight;
+                    }
+
+                    if (data.type === "tree") {
+                        renderProasicTree(data.tree);
+                    }
+                });
+
+                read();
+            });
+        }
+
+        read();
+    });
+});
+
+
+function runProasic(action) {
+
+  const form = document.getElementById("proasic-form");
+  const formData = new FormData(form);
+
+  formData.append("proasic_server",
+    document.getElementById("proasic_server").value);
+
+  formData.append("action", action);
+
+  fetch("/proasic_action", {
+    method: "POST",
+    body: formData
+  }).then(response => {
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+
+    function read() {
+      reader.read().then(({ done, value }) => {
+        if (done) return;
+
+        const chunk = decoder.decode(value);
+        const lines = chunk.split("\n");
+
+        lines.forEach(line => {
+          if (!line.trim()) return;
+          const data = JSON.parse(line);
+          document.getElementById("proasic-tests-output")
+            .textContent += data.line;
+        });
+
+        read();
+      });
+    }
+
+    read();
+  });
+}
