@@ -1,6 +1,6 @@
 <project name="db7_proasic_fw_cm" version="1.1">
     <ProjectDirectory>
-        C:\tile-wjtag\bin\proasic\db7_proasic_fw_cm
+        C:\tile-wjtag\bin\proasic\
     </ProjectDirectory>
     <View>
         ChainView
@@ -9,14 +9,22 @@
         
     </LiberoTargetDevice>
     <LogFile>
-        C:\tile-wjtag\bin\proasic\db7_proasic_fw_cm\db7_proasic_fw_cm.log
+        C:\tile-wjtag\bin\proasic\db7_proasic_fw_cm.log
     </LogFile>
     <SerializationOption>
         Skip
     </SerializationOption>
     <programmer status="enable" type="FlashPro5" revision="UndefRev" connection="usb2.0">
         <name>
-            S20059F8LM
+            tile-fp5-01
+        </name>
+        <id>
+            S20059F4B3
+        </id>
+    </programmer>
+    <programmer status="enable" type="FlashPro5" revision="UndefRev" connection="usb2.0">
+        <name>
+            tile-fp5-02
         </name>
         <id>
             S20059F8LM
@@ -72,6 +80,25 @@
                 </ProgrammingMode>
             </FlashPro5>
         </Hardware>
+        <Device type="ACTEL">
+            <Name>
+                A3P250
+            </Name>
+            <Custom>
+                db7_proasic
+            </Custom>
+            <Algo type="PDB">
+                <filename>
+                    C:\tile-wjtag\bin\proasic\db7_proasic.pdb
+                </filename>
+                <local>
+                    projectData\db7_proasic.pdb
+                </local>
+                <SelectedAction>
+                    VERIFY_ARRAY
+                </SelectedAction>
+            </Algo>
+        </Device>
         <Algo type="unknown">
             <irlength>
                 0
