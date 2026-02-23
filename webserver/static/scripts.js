@@ -6,7 +6,7 @@ const hiddenFpga = document.getElementById("hidden_hw_server_fpga");
 const hiddenFlash = document.getElementById("hidden_hw_server_flash");
 const hiddenTests = document.getElementById("hidden_hw_server_tests");
 
-// Initialize hidden fields with first selection
+// Initialize hidden fields
 hiddenFpga.value = hwServerSelect.value;
 hiddenFlash.value = hwServerSelect.value;
 hiddenTests.value = hwServerSelect.value;
@@ -85,15 +85,13 @@ function streamForm(formId, outputId, url, jsonCallback = null) {
 function renderTree(tree) {
   function renderNode(node) {
     if (node.devices) {
-      // Target node
       let html = `<li><span class="toggle">▶</span> 🎯 ${node.name}<ul class="nested">`;
       for (const d of node.devices) {
-        html += `<li>⚙️ ${d}</li>`; // device icon
+        html += `<li>⚙️ ${d}</li>`;
       }
       html += "</ul></li>";
       return html;
     } else if (node.server) {
-      // Server root
       let html = `<ul><li><span class="toggle">▶</span> 🖥️ ${node.server}<ul class="nested">`;
       for (const t of node.targets) {
         html += renderNode(t);
@@ -107,7 +105,6 @@ function renderTree(tree) {
   const container = document.getElementById("tests-tree");
   container.innerHTML = renderNode(tree);
 
-  // Add toggle click events
   const toggles = container.querySelectorAll(".toggle");
   toggles.forEach((t) => {
     t.addEventListener("click", function () {
@@ -126,31 +123,20 @@ function renderTree(tree) {
 streamForm("fpga-form", "fpga-output", "/program_fpga");
 streamForm("flash-form", "flash-output", "/program_flash");
 streamForm("tests-form", "tests-output", "/list_hw", (item) => {
-  if (item.type === "tree") {
-    renderTree(item.tree);
-  }
+  if (item.type === "tree") renderTree(item.tree);
 });
-
 
 // ==========================
 // Load FPGA Targets Dynamically
 // ==========================
-
 const targetsContainer = document.getElementById("fpga-targets-container");
 
 async function loadTargetsForServer(serverAddress) {
   targetsContainer.innerHTML = "Loading targets...";
-
   const formData = new FormData();
   formData.append("hw_server", serverAddress);
-
-  const response = await fetch("/get_targets", {
-    method: "POST",
-    body: formData
-  });
-
+  const response = await fetch("/get_targets", { method: "POST", body: formData });
   const data = await response.json();
-
   targetsContainer.innerHTML = "";
 
   if (!data.targets || data.targets.length === 0) {
@@ -160,10 +146,8 @@ async function loadTargetsForServer(serverAddress) {
 
   data.targets.forEach((t, index) => {
     const id = `target_${index}`;
-
     const div = document.createElement("div");
     div.className = "form-check";
-
     div.innerHTML = `
       <input class="form-check-input" type="checkbox"
              name="selected_targets"
@@ -173,33 +157,22 @@ async function loadTargetsForServer(serverAddress) {
         ${t.target} — ${t.device}
       </label>
     `;
-
     targetsContainer.appendChild(div);
   });
 }
-// Load targets initially
 loadTargetsForServer(hwServerSelect.value);
-
 
 // ==========================
 // Load Flash Targets Dynamically
 // ==========================
-
 const flashTargetsContainer = document.getElementById("flash-targets-container");
 
 async function loadFlashTargetsForServer(serverAddress) {
   flashTargetsContainer.innerHTML = "Loading targets...";
-
   const formData = new FormData();
   formData.append("hw_server", serverAddress);
-
-  const response = await fetch("/get_targets", {
-    method: "POST",
-    body: formData
-  });
-
+  const response = await fetch("/get_targets", { method: "POST", body: formData });
   const data = await response.json();
-
   flashTargetsContainer.innerHTML = "";
 
   if (!data.targets || data.targets.length === 0) {
@@ -209,10 +182,8 @@ async function loadFlashTargetsForServer(serverAddress) {
 
   data.targets.forEach((t, index) => {
     const id = `flash_target_${index}`;
-
     const div = document.createElement("div");
     div.className = "form-check";
-
     div.innerHTML = `
       <input class="form-check-input"
              type="checkbox"
@@ -223,122 +194,92 @@ async function loadFlashTargetsForServer(serverAddress) {
         ${t.target} — ${t.device}
       </label>
     `;
-
     flashTargetsContainer.appendChild(div);
   });
 }
-// Load flash targets initially
 loadFlashTargetsForServer(hwServerSelect.value);
 
+// ==========================
+// ProASIC Tests
+// ==========================
+let proasicJobRunning = false;
 
-function renderProasicTree(tree) {
-    const container = document.getElementById("proasic-tests-tree");
-    container.innerHTML = "";
-
-    const serverNode = document.createElement("div");
-    serverNode.innerHTML = "<b>Server:</b> " + tree.server;
-    container.appendChild(serverNode);
-
-    if (tree.programmers) {
-        tree.programmers.forEach(prg => {
-            const p = document.createElement("div");
-            p.style.marginLeft = "20px";
-            p.textContent = "Programmer: " + prg;
-            container.appendChild(p);
-        });
-    }
+function setProasicButtonsState(enabled) {
+    const buttons = document.querySelectorAll("#proasic-tests button");
+    buttons.forEach(btn => btn.disabled = !enabled);
+    proasicJobRunning = !enabled;
 }
 
-// ==============================
-// ProASIC Tests
-// ==============================
-document.getElementById("proasic-tests-form").addEventListener("submit", function (e) {
-    e.preventDefault();   // 🔥 THIS prevents tab reset
 
-    const output = document.getElementById("proasic-tests-output");
-    const treeContainer = document.getElementById("proasic-tests-tree");
+document.getElementById("proasic-form").addEventListener("submit", function (e) {
+  e.preventDefault();
 
-    output.textContent = "";
-    treeContainer.innerHTML = "";
+  if (proasicJobRunning) {
+    alert("⚠️ A ProASIC job is already running. Please wait until it finishes.");
+    return;
+  }
 
-    const server = document.getElementById("proasic_server").value;
-    document.getElementById("hidden_proasic_server_tests").value = server;
+  setProasicButtonsState(false); // disable buttons
 
-    const formData = new FormData(this);
+  const output = document.getElementById("proasic-tests-output");
+  output.textContent = "";
 
-    fetch("/list_proasic", {
-        method: "POST",
-        body: formData
-    }).then(response => {
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
+  const form = e.target;
+  const server = document.getElementById("proasic_server").value;
+  document.getElementById("hidden_proasic_server_tests").value = server;
 
-        function read() {
-            reader.read().then(({ done, value }) => {
-                if (done) return;
+  // Collect all checked actions
+  const actions = [];
+  form.querySelectorAll("input[name='actions']:checked").forEach(cb => actions.push(cb.value));
 
-                const chunk = decoder.decode(value);
-                const lines = chunk.trim().split("\n");
+  if (actions.length === 0) {
+    output.textContent = "⚠️ Please select at least one action.";
+    setProasicButtonsState(true); // re-enable buttons
+    return;
+  }
 
-                lines.forEach(line => {
-                    if (!line) return;
-                    const data = JSON.parse(line);
+  const formData = new FormData(form);
+  actions.forEach(a => formData.append("actions", a));
 
-                    if (data.type === "log") {
-                        output.textContent += data.line;
-                        output.scrollTop = output.scrollHeight;
-                    }
+  fetch("/proasic_action", { method: "POST", body: formData })
+    .then(response => {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
 
-                    if (data.type === "tree") {
-                        renderProasicTree(data.tree);
-                    }
-                });
+      function read() {
+        reader.read().then(({ done, value }) => {
+          if (done) {
+            setProasicButtonsState(true); // re-enable buttons when done
+            return;
+          }
 
-                read();
-            });
-        }
+          const chunk = decoder.decode(value, { stream: true });
+          const lines = chunk.split("\n");
 
-        read();
+          lines.forEach(line => {
+            if (!line.trim()) return;
+
+            let data;
+            try {
+              data = JSON.parse(line);
+            } catch {
+              data = { type: "log", line: line };
+            }
+
+            if (data.type === "log") {
+              output.textContent += data.line;
+              output.scrollTop = output.scrollHeight;
+            }
+          });
+
+          read();
+        });
+      }
+
+      read();
+    })
+    .catch(err => {
+      output.textContent += `\nError: ${err}\n`;
+      setProasicButtonsState(true); // re-enable on error
     });
 });
-
-
-function runProasic(action) {
-
-  const form = document.getElementById("proasic-form");
-  const formData = new FormData(form);
-
-  formData.append("proasic_server",
-    document.getElementById("proasic_server").value);
-
-  formData.append("action", action);
-
-  fetch("/proasic_action", {
-    method: "POST",
-    body: formData
-  }).then(response => {
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-
-    function read() {
-      reader.read().then(({ done, value }) => {
-        if (done) return;
-
-        const chunk = decoder.decode(value);
-        const lines = chunk.split("\n");
-
-        lines.forEach(line => {
-          if (!line.trim()) return;
-          const data = JSON.parse(line);
-          document.getElementById("proasic-tests-output")
-            .textContent += data.line;
-        });
-
-        read();
-      });
-    }
-
-    read();
-  });
-}

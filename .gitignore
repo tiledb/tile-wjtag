@@ -13,3 +13,4 @@ vivado_logs/*
 .DS_Store
 flashpro_logs/*
 tcl_proasic/*
+*.Xil

@@ -1,6 +1,6 @@
 <project name="db7_proasic_fw_cm" version="1.1">
     <ProjectDirectory>
-        C:\tile-wjtag\bin\proasic\
+        /home/tiledb/apps/tile-wjtag/bin/proasic
     </ProjectDirectory>
     <View>
         ChainView
@@ -9,7 +9,7 @@
         
     </LiberoTargetDevice>
     <LogFile>
-        C:\tile-wjtag\bin\proasic\db7_proasic_fw_cm.log
+        /home/tiledb/apps/tile-wjtag/bin/proasic/db7_proasic_fw_cm.log
     </LogFile>
     <SerializationOption>
         Skip
@@ -89,13 +89,13 @@
             </Custom>
             <Algo type="PDB">
                 <filename>
-                    C:\tile-wjtag\bin\proasic\db7_proasic.pdb
+                    /home/tiledb/apps/tile-wjtag/bin/proasic/db7_proasic.pdb
                 </filename>
                 <local>
-                    projectData\db7_proasic.pdb
+                    projectData/db7_proasic.pdb
                 </local>
                 <SelectedAction>
-                    VERIFY_ARRAY
+                    VERIFY
                 </SelectedAction>
             </Algo>
         </Device>

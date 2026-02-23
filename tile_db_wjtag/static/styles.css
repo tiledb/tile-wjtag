@@ -1,0 +1,122 @@
+body {
+    background: #1e1e1e;
+    color: white;
+    font-family: monospace;
+}
+
+.container {
+    width: 95%;
+    margin: auto;
+    padding: 20px;
+}
+
+.group {
+    border: 1px solid #444;
+    padding: 15px;
+    margin-bottom: 25px;
+    background: #252525;
+}
+
+.group h2 {
+    margin-top: 0;
+    border-bottom: 1px solid #444;
+    padding-bottom: 5px;
+}
+
+.row {
+    display: flex;
+    align-items: center;
+    margin: 10px 0;
+}
+
+button {
+    width: 220px;
+    padding: 8px;
+    cursor: pointer;
+}
+
+.led {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    margin-left: 15px;
+    background: gray;
+}
+
+.running {
+    background: orange;
+    animation: blink 1s infinite;
+}
+
+.green { background: lime; }
+.red { background: red; }
+
+@keyframes blink {
+    0% { opacity: 1; }
+    50% { opacity: 0.2; }
+    100% { opacity: 1; }
+}
+
+.id-field {
+    margin-left: 20px;
+    color: cyan;
+    font-weight: bold;
+}
+
+#console {
+    background: black;
+    height: 350px;
+    overflow-y: scroll;
+    padding: 10px;
+    border: 1px solid #444;
+}
+
+.vivado { color: yellow; }
+.flashpro { color: lightblue; }
+
+
+.proasic-id-box {
+    margin-left: 20px;
+    display: flex;
+    flex-direction: column;
+    font-weight: bold;
+    color: cyan;
+}
+
+.proasic-verify-box {
+    margin-left: 20px;
+    display: flex;
+    flex-direction: column;
+    font-weight: bold;
+}
+
+.proasic-verify-box .passed {
+    color: green;
+}
+
+.proasic-verify-box .failed {
+    color: red;
+}
+
+
+.proasic-program-box {
+    margin-left: 20px;
+    display: flex;
+    flex-direction: column;
+    font-weight: bold;
+}
+
+.proasic-program-box .passed {
+    color: green;
+}
+
+.proasic-program-box .failed {
+    color: red;
+}
+
+
+.elapsed-timer {
+    margin-left: 10px;
+    font-family: monospace;
+    font-weight: bold;
+}

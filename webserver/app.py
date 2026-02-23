@@ -183,34 +183,16 @@ def upload_jedfile():
 
 @app.route('/proasic_action', methods=['POST'])
 def proasic_action():
-
     hw_server = request.form.get("proasic_server")
-    action = request.form.get("action")
+    actions = request.form.getlist("actions")  # e.g., ["VERIFY", "DEVICE_INFO", "PROGRAM"]
 
-    project_file = None
-    pdb_file = None
-
-    # If user uploaded files
-    if "project_file" in request.files:
-        file = request.files["project_file"]
-        if file.filename != "":
-            path = os.path.join(microsemi_tests.UPLOAD_FOLDER, file.filename)
-            file.save(path)
-            project_file = path
-
-    if "pdb_file" in request.files:
-        file = request.files["pdb_file"]
-        if file.filename != "":
-            path = os.path.join(microsemi_tests.UPLOAD_FOLDER, file.filename)
-            file.save(path)
-            pdb_file = path
+    project_file = request.form.get("project_file") or None
 
     def generate():
         for item in microsemi_tests.enqueue_flashpro_job(
                 hw_server,
-                action,
-                project_file,
-                pdb_file):
+                actions,
+                project_file):
             yield json.dumps(item) + "\n"
 
     return Response(stream_with_context(generate()),

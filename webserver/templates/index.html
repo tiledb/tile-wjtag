@@ -147,45 +147,43 @@
 
       <!-- ----- Tab 4: ProASIC Tests ---- -->
       <div class="tab-pane fade" id="proasic-tests" role="tabpanel">
-
         <form id="proasic-form" enctype="multipart/form-data">
-
           <input type="hidden" name="proasic_server" id="hidden_proasic_server_tests" />
 
           <div class="mb-3">
             <label>Project (.pro)</label>
             <input type="file" name="project_file" class="form-control">
             <small class="text-muted">
-              Default: ../bin/proasic/db7_proasic.pro
+              Default: ../bin/proasic/db7_proasic_fw_cm.pro
             </small>
           </div>
 
+          <!-- Action Selection -->
           <div class="mb-3">
-            <label>PDB file (.pdb)</label>
-            <input type="file" name="pdb_file" class="form-control">
-            <small class="text-muted">
-              Default: ../bin/proasic/db7_proasic.pdb
-            </small>
+            <label class="form-label"><b>Actions:</b></label><br />
+            <div class="form-check form-check-inline">
+              <input class="form-check-input" type="checkbox" id="action-verify" name="actions" value="VERIFY" checked>
+              <label class="form-check-label" for="action-verify">Verify</label>
+            </div>
+            <div class="form-check form-check-inline">
+              <input class="form-check-input" type="checkbox" id="action-device-info" name="actions" value="DEVICE_INFO"
+                checked>
+              <label class="form-check-label" for="action-device-info">Device Info</label>
+            </div>
+            <div class="form-check form-check-inline">
+              <input class="form-check-input" type="checkbox" id="action-program" name="actions" value="PROGRAM">
+              <label class="form-check-label" for="action-program">Program</label>
+            </div>
           </div>
 
           <div class="mb-2">
-            <button type="button" class="btn btn-secondary" onclick="runProasic('list')">
-              List Programmers
-            </button>
-
-            <button type="button" class="btn btn-warning" onclick="runProasic('VERIFY')">
-              Verify
-            </button>
-
-            <button type="button" class="btn btn-success" onclick="runProasic('PROGRAM')">
-              Program
+            <button type="submit" class="btn btn-primary">
+              Run Selected Actions
             </button>
           </div>
-
         </form>
 
         <pre id="proasic-tests-output" class="mt-3 bg-light p-2" style="height: 300px; overflow: auto"></pre>
-
       </div>
 
 

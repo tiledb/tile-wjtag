@@ -1,0 +1,13 @@
+#-----------------------------------------------------------
+# Vivado Lab Edition v2022.2 (64-bit)
+# SW Build 3671981 on Fri Oct 14 04:59:54 MDT 2022
+# 
+# Start of session at: Sun Feb 22 20:23:10 2026
+# Process ID: 368608
+# Current directory: /home/tiledb/apps/tile-wjtag/tile_db_wjtag
+# Command line: vivado_lab -mode batch -log /home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/logs/vivado/vivado_2026-02-22_20-23-09_get_ku_properties.log -journal /home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/logs/vivado/vivado_2026-02-22_20-23-09_get_ku_properties.jou -source /home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/tcl/get_ku_properties.tcl
+# Log file: /home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/logs/vivado/vivado_2026-02-22_20-23-09_get_ku_properties.log
+# Journal file: /home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/logs/vivado/vivado_2026-02-22_20-23-09_get_ku_properties.jou
+# Running On: piro-almalinux0810-vserver.fysik.su.se, OS: Linux, CPU Frequency: 3403.346 MHz, CPU Physical cores: 4, Host memory: 8071 MB
+#-----------------------------------------------------------
+source /home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/tcl/get_ku_properties.tcl

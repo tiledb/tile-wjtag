@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>FPGA Programming Station</title>
+    <link rel="stylesheet" href="../static/styles.css">
+</head>
+
+<body>
+
+    <div class="container">
+
+        <h1>FPGA Programming Station</h1>
+
+        <!-- ================= XILINX GROUP ================= -->
+        <div class="group">
+            <h2>Xilinx KU Operations</h2>
+
+            <div class="row">
+                <button onclick="startAction('get_ku_properties', 'ku')">Get IDs for Xilinx KU</button>
+                <div id="led_get_ku_properties" class="led"></div>
+                <span id="timer_get_ku_properties" class="elapsed-timer">00:00</span>
+            </div>
+
+            <div class="row">
+                <button onclick="startAction('program_ku', 'none')">
+                    Program KU FPGA
+                </button>
+                <div id="led_program_ku" class="led"></div>
+                <span id="timer_program_ku" class="elapsed-timer">00:00</span>
+            </div>
+
+            <div class="row">
+                <button onclick="startAction('program_ku_flash', 'ku')">Program Xilinx KU Flash</button>
+                <div id="led_program_ku_flash" class="led"></div>
+                <span id="timer_program_ku_flash" class="elapsed-timer">00:00</span>
+            </div>
+        </div>
+
+
+        <!-- ================= PROASIC GROUP ================= -->
+        <div class="group">
+            <h2>ProASIC Operations</h2>
+
+            <div class="row">
+                <button onclick="startAction('get_proasic_info', 'proasic')">
+                    Get FPGA Info
+                </button>
+                <div id="led_get_proasic_info" class="led"></div>
+                <span id="timer_get_proasic_info" class="elapsed-timer">00:00</span>
+
+                <div class="proasic-id-box">
+                    <div>Side A: <span id="proasic_side_a">---</span></div>
+                    <div>Side B: <span id="proasic_side_b">---</span></div>
+                </div>
+            </div>
+
+            <div class="row">
+                <button onclick="startAction('verify_proasic', 'proasic_verify')">Verify FPGA</button>
+                <div id="led_verify_proasic" class="led"></div>
+                <span id="timer_verify_proasic" class="elapsed-timer">00:00</span>
+
+                <div class="proasic-verify-box">
+                    <div>Side A: <span id="verify_side_a_status">---</span> (<span id="verify_side_a_id">---</span>)
+                    </div>
+                    <div>Side B: <span id="verify_side_b_status">---</span> (<span id="verify_side_b_id">---</span>)
+                    </div>
+                </div>
+            </div>
+
+
+            <div class="row">
+                <button onclick="startAction('program_proasic', 'proasic_program')">Program FPGA</button>
+                <div id="led_program_proasic" class="led"></div>
+                <span id="timer_program_proasic" class="elapsed-timer">00:00</span>
+
+                <div class="proasic-program-box">
+                    <div>Side A: <span id="program_side_a_status">---</span> (<span id="program_side_a_id">---</span>)
+                    </div>
+                    <div>Side B: <span id="program_side_b_status">---</span> (<span id="program_side_b_id">---</span>)
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <h2>Console</h2>
+        <div id="console"></div>
+
+    </div>
+
+    <script src="../static/scripts.js"></script>
+</body>
+
+</html>
