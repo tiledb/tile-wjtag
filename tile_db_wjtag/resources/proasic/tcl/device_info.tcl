@@ -1,4 +1,4 @@
-open_project -project {/home/tiledb/apps/tile-wjtag/bin/proasic/db7_proasic_fw_cm.pro} -connect_programmers 1 
+open_project -project {/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/proasic/bin/db7_proasic_fw_cm.pro} -connect_programmers 1 
 configure_flashpro5_prg \
          -vpump {ON} \
          -clk_mode {free_running_clk} \

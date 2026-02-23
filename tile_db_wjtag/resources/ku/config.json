@@ -1,0 +1,19 @@
+{"vivado": [
+    {
+        "hw_server": "localhost:3121",
+        "target": "xilinx_tcf/Digilent/",
+        "id": "210249B06E36",
+        "device": "xcku035",
+        "binfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db6v5_top.bin",
+        "ltxfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db6v5_top.ltx"
+    },
+    {
+        "hw_server": "localhost:3121",
+        "target": "xilinx_tcf/Digilent/",
+        "id": "210249B07138",
+        "device": "xcku035",
+        "binfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db6v5_top.bin",
+        "ltxfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db6v5_top.ltx"
+    }
+    ]
+}

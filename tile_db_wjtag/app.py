@@ -23,6 +23,8 @@ VIVADO_LOG_FOLDER = os.path.join(RESOURCES_FOLDER, "ku/logs/vivado")
 print(f"VIVADO_LOG_FOLDER: {VIVADO_LOG_FOLDER}")
 VIVADO_TCL_FOLDER = os.path.join(RESOURCES_FOLDER, "ku/tcl")
 print(f"VIVADO_TCL_FOLDER: {VIVADO_TCL_FOLDER}")
+VIVADO_CONFIG_FOLDER = os.path.join(RESOURCES_FOLDER, "ku")
+print(f"VIVADO_CONFIG_FOLDER: {VIVADO_CONFIG_FOLDER}")
 
 PROASIC_BIN_FOLDER = os.path.join(RESOURCES_FOLDER, "proasic/bin")
 print(f"PROASIC_BIN_FOLDER: {PROASIC_BIN_FOLDER}")
@@ -49,8 +51,17 @@ job_queue = queue.Queue()
 # PROCESS EXECUTION
 # ===============================
 
+import os
+import pty
+import subprocess
+import errno
+import re
 
 def run_process(command, source_type):
+    """
+    Executes a process via PTY and streams output for Flask SSE.
+    Handles ProASIC and Xilinx KU separately for accurate per-side status.
+    """
 
     master_fd, slave_fd = pty.openpty()
 
@@ -65,52 +76,101 @@ def run_process(command, source_type):
 
     os.close(slave_fd)
 
-    error_detected = False
-    success_detected = False
+    # Dispatch to per-FPGA type handler
+    if source_type == "proasic":
+        yield from _run_process_proasic(process, master_fd)
+    elif source_type == "ku":
+        yield from _run_process_ku(process, master_fd)
+    else:
+        yield from _run_process_generic(process, master_fd)
 
+
+# -----------------------------
+# ProASIC handler
+# -----------------------------
+def _run_process_proasic(process, master_fd):
+    side_status = {}  # "A" or "B"
     try:
         with os.fdopen(master_fd) as stdout:
-            while True:
-                try:
-                    line = stdout.readline()
-                    if not line:
-                        break
+            for line in stdout:
+                yield {"source": "proasic", "line": line}
 
-                    # Detect errors
-                    if any(x in line for x in ["Error", "ERROR", "Failed", "FAIL"]):
-                        error_detected = True
+                # Match PASSED/FAILED lines
+                match = re.match(
+                    r"programmer\s+'(tile-fp5-0[12])'.*?\s(PASSED|FAILED)",
+                    line,
+                    re.I
+                )
+                if match:
+                    side = "A" if match[1] == "tile-fp5-01" else "B"
+                    side_status[side] = "success" if match[2].upper() == "PASSED" else "failure"
 
-                    # Detect success keywords
-                    if any(x in line for x in ["PASSED", "completed successfully"]):
-                        success_detected = True
-
-                    yield {
-                        "source": source_type,
-                        "line": line
-                    }
-
-                except OSError as e:
-                    if e.errno == errno.EIO:
-                        # Expected when PTY closes
-                        break
-                    else:
-                        raise
+    except OSError as e:
+        if e.errno != errno.EIO:
+            raise
 
     finally:
         process.wait()
 
-    # Determine final status
+    # Overall LED status
+    status = "failure" if "failure" in side_status.values() else "success"
+    yield {"source": "proasic", "status": status, "side_status": side_status}
+
+
+# -----------------------------
+# Xilinx KU handler
+# -----------------------------
+def _run_process_ku(process, master_fd):
+    side_status = {}  # DNA-based
+    try:
+        with os.fdopen(master_fd) as stdout:
+            for line in stdout:
+                yield {"source": "ku", "line": line}
+
+                # Match tile success/failure
+                match = re.match(
+                    r"\((210249B06E36|210249B07138)\) Tile Operation (Success|Failure)!",
+                    line
+                )
+                if match:
+                    serial = match[1]
+                    side_status[serial] = "success" if match[2] == "Success" else "failure"
+
+    except OSError as e:
+        if e.errno != errno.EIO:
+            raise
+
+    finally:
+        process.wait()
+
+    # Overall LED status
     if error_detected:
         status = "failure"
     elif success_detected:
         status = "success"
     else:
-        status = "success" if process.returncode == 0 else "failure"
+        # status = "success" if process.returncode == 0 else "failure"
+        status = "failure"
 
-    yield {
-        "source": source_type,
-        "status": status
-    }
+    yield {"source": "ku", "status": status, "side_status": side_status}
+
+
+# -----------------------------
+# Generic fallback (just stream)
+# -----------------------------
+def _run_process_generic(process, master_fd):
+    try:
+        with os.fdopen(master_fd) as stdout:
+            for line in stdout:
+                yield {"source": "generic", "line": line}
+    except OSError as e:
+        if e.errno != errno.EIO:
+            raise
+    finally:
+        process.wait()
+    yield {"source": "generic", "status": "success" if process.returncode == 0 else "failure"}
+
+
     
     
 # ===============================
@@ -155,6 +215,19 @@ def build_command(action):
             f"bash -c 'source {VIVADO_SETTINGS} && "
             f"vivado_lab -mode batch -log {log_file} -journal {jou_file} -source {tcl}'"
         ), "vivado"
+        
+    elif action == "verify_ku_flash":
+
+        log_file = os.path.join(VIVADO_LOG_FOLDER, f"vivado_{timestamp}_{action}.log")
+        jou_file = os.path.join(VIVADO_LOG_FOLDER, f"vivado_{timestamp}_{action}.jou")
+
+        tcl = os.path.join(VIVADO_TCL_FOLDER, "verify_ku_flash.tcl")
+
+        return (
+            f"bash -c 'source {VIVADO_SETTINGS} && "
+            f"vivado_lab -mode batch -log {log_file} -journal {jou_file} -source {tcl}'"
+        ), "vivado"
+
 
     elif action == "get_proasic_info":
         

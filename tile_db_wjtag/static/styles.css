@@ -115,6 +115,60 @@ button {
 }
 
 
+.ku-id-box {
+    margin-left: 20px;
+    display: flex;
+    flex-direction: column;
+    font-weight: bold;
+    color: cyan;
+}
+
+
+.ku-program-box,
+.ku-flash-program-box,
+.ku-verify-box {
+    margin-left: 20px;
+    display: flex;
+    flex-direction: column;
+    font-weight: bold;
+}
+
+.passed {
+    color: green;
+}
+
+.failed {
+    color: red;
+}
+
+
+.row-with-console {
+    display: flex;
+    gap: 20px;       /* space between left panel and console */
+}
+
+.left-panel {
+    flex: 0 0 auto;  /* width fits content (buttons + IDs) */
+}
+
+.right-console {
+    flex: 1 1 auto;  /* take remaining space, grow/shrink automatically */
+    min-width: 200px; /* optional: prevent it from getting too small */
+}
+
+.console {
+    background-color: #111;
+    color: #0f0;
+    font-family: monospace;
+    font-size: 10px;
+    padding: 10px;
+    height: 200px;
+    overflow-y: auto;
+    border: 1px solid #444;
+}
+
+
+
 .elapsed-timer {
     margin-left: 10px;
     font-family: monospace;

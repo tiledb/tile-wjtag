@@ -3,7 +3,6 @@
 *.pyc
 __pycache__/
 uploads/*
-tcl/*
 tmp/*
 vivado_logs/*
 # Ignore logs
@@ -12,5 +11,8 @@ vivado_logs/*
 # Ignore system files
 .DS_Store
 flashpro_logs/*
-tcl_proasic/*
 *.Xil
+*.jou
+tile_wjtag_webserver/tcl/*
+tile_wjtag_webserver/tcl_proasic/logged/*
+tile_wjtag_webserver/tcl_proasic/fp_projects_log/*

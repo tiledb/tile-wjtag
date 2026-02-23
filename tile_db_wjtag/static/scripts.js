@@ -1,17 +1,40 @@
-let activeEventSource = null;
+let activeEventSources = {
+    ku: null,
+    proasic: null
+};
+
 
 let activeTimers = {}; // keep track of running timers
 
 function startAction(action, type) {
 
-    if (activeEventSource) {
-        alert("Another operation is running.");
+    let group = null;
+
+    if (action.includes("ku")) {
+        group = "ku";
+    } else if (action.includes("proasic")) {
+        group = "proasic";
+    }
+
+    if (!group) {
+        console.warn("Unknown action group:", action);
         return;
     }
 
-    clearConsole();
+    if (activeEventSources[group]) {
+        alert(group.toUpperCase() + " operation already running.");
+        return;
+    }
+    clearConsole(group);
+
 
     const led = document.getElementById("led_" + action);
+    // if (led) {
+    //     resetLED(led);
+    //     led.classList.add("running");
+    // } else {
+    //     console.warn("LED element not found for action:", action);
+    // }
     const timerSpan = document.getElementById("timer_" + action);
 
     resetLED(led);
@@ -45,29 +68,111 @@ function startAction(action, type) {
         ["verify_side_a_status","verify_side_a_id","verify_side_b_status","verify_side_b_id"].forEach(id => document.getElementById(id).innerText = "---");
     }
 
-    activeEventSource = new EventSource("/run/" + action);
 
-    activeEventSource.onmessage = function(event) {
+    
+    activeEventSources[group] = new EventSource("/run/" + action);
+    const eventSource = activeEventSources[group];
+
+
+    eventSource.onmessage = function(event) {
         const data = JSON.parse(event.data);
 
+        // ------------------------
+        // Console output
+        // ------------------------
         if (data.line) {
-            appendToConsole(data.line, data.source);
+            appendToConsole(data.line, group);
+
 
             if (type === "proasic_program") {
                 parseProgramLine(data.line);
+
             } else if (type === "proasic_verify") {
                 parseVerifyLine(data.line);
+
             } else if (type === "proasic") {
                 parseIDs(data.line, type);
+
             } else if (type === "ku") {
-                parseIDs(data.line, type);
+                parseKuID(data.line);
+
+            } else if (type === "ku_verify") {
+                parseKuVerify(data.line);
+
+            } else if (type === "ku_program") {
+                parseKuProgram(data.line);
+
+            } else if (type === "ku_flash_program") {
+                parseKuFlashProgram(data.line);
             }
         }
 
+        // ------------------------
+        // Handle per-side status from run_process
+        // ------------------------
+        if (data.side_status) {
+            // Iterate over sides returned from Python
+            for (const [sideKey, result] of Object.entries(data.side_status)) {
+                let statusText = result === "success" ? "Passed" : "FAILED!";
+                let className = result === "success" ? "passed" : "failed";
+
+                // ------------------------
+                // ProASIC
+                // ------------------------
+                if (data.source === "proasic") {
+                    const side = sideKey === "A" ? "a" : "b";
+                    const statusId = type.includes("program") ? `program_side_${side}_status` : `verify_side_${side}_status`;
+                    const idId = type.includes("program") ? `program_side_${side}_id` : `verify_side_${side}_id`;
+
+                    const statusSpan = document.getElementById(statusId);
+                    const idSpan = document.getElementById(idId);
+
+                    if (statusSpan) {
+                        statusSpan.innerText = statusText;
+                        statusSpan.className = className;
+                    }
+
+                    // Keep ID/FSN only if exists
+                    if (idSpan && document.getElementById(`proasic_side_${side}`)) {
+                        idSpan.innerText = document.getElementById(`proasic_side_${side}`).innerText;
+                    }
+                }
+
+                // ------------------------
+                // Xilinx KU
+                // ------------------------
+                if (data.source === "ku") {
+                    const map = {"210249B06E36": "a", "210249B07138": "b"};
+                    const side = map[sideKey] || sideKey;
+
+                    const statusId = type.includes("program") ? `ku_program_side_${side}_status` :
+                                    type.includes("flash")   ? `ku_flash_side_${side}_status` :
+                                    `ku_verify_side_${side}_status`;
+                    const dnaId = `ku_side_${side}_dna`;
+
+                    const statusSpan = document.getElementById(statusId);
+                    const dnaSpan = document.getElementById(dnaId);
+                    const idSpan = statusId.replace("_status","_id"); // e.g., ku_program_side_a_id
+
+                    if (statusSpan) {
+                        statusSpan.innerText = statusText;
+                        statusSpan.className = className;
+                    }
+
+                    if (idSpan && dnaSpan) {
+                        document.getElementById(idSpan).innerText = dnaSpan.innerText;
+                    }
+                }
+            }
+        }
+
+        // ------------------------
+        // Final status / LED
+        // ------------------------
         if (data.status) {
             finishLED(led, data.status);
-            activeEventSource.close();
-            activeEventSource = null;
+            eventSource.close();
+            activeEventSources[group] = null;
 
             // Stop timer
             if (activeTimers[action]) {
@@ -75,17 +180,14 @@ function startAction(action, type) {
                 delete activeTimers[action];
             }
 
-            // Auto-trigger verify after program
-            // if (type === "proasic_program") {
-            //     startAction("verify_proasic", "proasic_verify");
-            // }
         }
     };
 
-    activeEventSource.onerror = function() {
+
+    eventSource.onerror = function() {
         finishLED(led, "failure");
-        activeEventSource.close();
-        activeEventSource = null;
+        eventSource.close();
+        activeEventSources[group] = null;
 
         // Stop timer on error
         if (activeTimers[action]) {
@@ -97,15 +199,18 @@ function startAction(action, type) {
 
 
 
+function appendToConsole(text, group) {
+    const consoleId = group === "ku" ? "ku_console" : "proasic_console";
+    const consoleDiv = document.getElementById(consoleId);
+    if (!consoleDiv) return;
 
-function appendToConsole(text, source) {
-    const consoleDiv = document.getElementById("console");
     const line = document.createElement("div");
-    line.className = source;
     line.textContent = text;
     consoleDiv.appendChild(line);
     consoleDiv.scrollTop = consoleDiv.scrollHeight;
 }
+
+
 
 function parseIDs(line, type) {
 
@@ -226,6 +331,181 @@ function parseProgramLine(line) {
     }
 }
 
+function parseKuID(line) {
+
+    const dnaRegex = /\((210249B06E36|210249B07138)\).*FUSE_DNA\s*=\s*([0-9A-F]+)/i;
+    const match = line.match(dnaRegex);
+
+    if (!match) return;
+
+    const serial = match[1];
+    const dna = match[2];
+
+    if (serial === "210249B06E36") {
+        document.getElementById("ku_side_a_dna").innerText = dna;
+    }
+
+    if (serial === "210249B07138") {
+        document.getElementById("ku_side_b_dna").innerText = dna;
+    }
+}
+
+
+
+function parseKuVerify(line) {
+
+    const regex = /\((210249B06E36|210249B07138)\).*?(successful|failed)/i;
+    const match = line.match(regex);
+
+    if (!match) return;
+
+    const serial = match[1];
+    const passed = match[2].toLowerCase().includes("successful");
+
+    updateKuVerify(serial, passed);
+}
+
+
+function updateKuVerify(serial, passed) {
+
+    const statusText = passed ? "Passed" : "FAILED!";
+    const className = passed ? "passed" : "failed";
+
+    if (serial === "210249B06E36") {
+        document.getElementById("ku_verify_side_a_status").innerText = statusText;
+        document.getElementById("ku_verify_side_a_status").className = className;
+        document.getElementById("ku_verify_side_a_id").innerText =
+            document.getElementById("ku_side_a_dna").innerText;
+
+    }
+
+    if (serial === "210249B07138") {
+        document.getElementById("ku_verify_side_b_status").innerText = statusText;
+        document.getElementById("ku_verify_side_b_status").className = className;
+        document.getElementById("ku_verify_side_b_id").innerText =
+            document.getElementById("ku_side_b_dna").innerText;
+
+    }
+}
+
+
+function updateKuDNA(serial, dna) {
+
+    if (serial === "210249B06E36") {
+        document.getElementById("ku_side_a_dna").innerText = dna;
+    }
+
+    if (serial === "210249B07138") {
+        document.getElementById("ku_side_b_dna").innerText = dna;
+    }
+}
+
+function updateKuProgramStatus(serial, passed) {
+
+    const statusText = passed ? "Programmed" : "FAILED!";
+    const className = passed ? "passed" : "failed";
+
+    if (serial === "210249B06E36") {
+        document.getElementById("ku_program_side_a_status").innerText = statusText;
+        document.getElementById("ku_program_side_a_status").className = className;
+    }
+
+    if (serial === "210249B07138") {
+        document.getElementById("ku_program_side_b_status").innerText = statusText;
+        document.getElementById("ku_program_side_b_status").className = className;
+    }
+}
+
+
+function parseKuProgram(line) {
+
+    const dnaRegex = /\((210249B06E36|210249B07138)\).*FUSE_DNA\s*=\s*([0-9A-F]+)/i;
+    const resultRegex = /\((210249B06E36|210249B07138)\)\s+Tile Operation\s+(Success|Failure)!/i;
+
+    let match;
+
+    // ----------------------------
+    // DNA extraction (PROGRAM SECTION ONLY)
+    // ----------------------------
+    if ((match = line.match(dnaRegex))) {
+        const serial = match[1];
+        const dna = match[2];
+
+        if (serial === "210249B06E36") {
+            document.getElementById("ku_program_side_a_id").innerText = dna;
+        }
+
+        if (serial === "210249B07138") {
+            document.getElementById("ku_program_side_b_id").innerText = dna;
+        }
+    }
+
+    // ----------------------------
+    // Success / Failure
+    // ----------------------------
+    if ((match = line.match(resultRegex))) {
+        const serial = match[1];
+        const passed = match[2].toLowerCase() === "success";
+
+        updateKuProgramStatus(serial, passed);
+    }
+}
+
+
+
+
+function parseKuFlashProgram(line) {
+
+    const dnaRegex = /\((210249B06E36|210249B07138)\).*FUSE_DNA\s*=\s*([0-9A-F]+)/i;
+    const resultRegex = /\((210249B06E36|210249B07138)\)\s+Tile Operation\s+(Success|Failure)!/i;
+
+    let match;
+
+    // ----------------------------
+    // DNA extraction (FLASH SECTION ONLY)
+    // ----------------------------
+    if ((match = line.match(dnaRegex))) {
+        const serial = match[1];
+        const dna = match[2];
+
+        if (serial === "210249B06E36") {
+            document.getElementById("ku_flash_side_a_id").innerText = dna;
+        }
+
+        if (serial === "210249B07138") {
+            document.getElementById("ku_flash_side_b_id").innerText = dna;
+        }
+    }
+
+    // ----------------------------
+    // Success / Failure
+    // ----------------------------
+    if ((match = line.match(resultRegex))) {
+        const serial = match[1];
+        const passed = match[2].toLowerCase() === "success";
+
+        updateKuFlashStatus(serial, passed);
+    }
+}
+
+function updateKuFlashStatus(serial, passed) {
+
+    const statusText = passed ? "Programmed" : "FAILED!";
+    const className = passed ? "passed" : "failed";
+
+    if (serial === "210249B06E36") {
+        document.getElementById("ku_flash_side_a_status").innerText = statusText;
+        document.getElementById("ku_flash_side_a_status").className = className;
+    }
+
+    if (serial === "210249B07138") {
+        document.getElementById("ku_flash_side_b_status").innerText = statusText;
+        document.getElementById("ku_flash_side_b_status").className = className;
+    }
+}
+
+
+
 
 
 function finishLED(led, status) {
@@ -241,6 +521,8 @@ function resetLED(led) {
     led.className = "led";
 }
 
-function clearConsole() {
-    document.getElementById("console").innerHTML = "";
+function clearConsole(group) {
+    const consoleId = group === "ku" ? "ku_console" : "proasic_console";
+    const consoleDiv = document.getElementById(consoleId);
+    if (consoleDiv) consoleDiv.innerHTML = "";
 }
