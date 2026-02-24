@@ -120,9 +120,9 @@ foreach p $programmers {
         create_hw_cfgmem -hw_device $hw_dev_lindex [lindex [get_cfgmem_parts {is25lp256d-spi-x1_x2_x4}] 0]
 
         set_property PROGRAM.BLANK_CHECK 0 [get_property PROGRAM.HW_CFGMEM $hw_dev_lindex]
-        set_property PROGRAM.ERASE 1 [get_property PROGRAM.HW_CFGMEM $hw_dev_lindex]
-        set_property PROGRAM.CFG_PROGRAM 1 [get_property PROGRAM.HW_CFGMEM $hw_dev_lindex]
-        set_property PROGRAM.VERIFY 0 [get_property PROGRAM.HW_CFGMEM $hw_dev_lindex]
+        set_property PROGRAM.ERASE 0 [get_property PROGRAM.HW_CFGMEM $hw_dev_lindex]
+        set_property PROGRAM.CFG_PROGRAM 0 [get_property PROGRAM.HW_CFGMEM $hw_dev_lindex]
+        set_property PROGRAM.VERIFY 1 [get_property PROGRAM.HW_CFGMEM $hw_dev_lindex]
         set_property PROGRAM.CHECKSUM 0 [get_property PROGRAM.HW_CFGMEM $hw_dev_lindex]
 
         set_property PROGRAM.ADDRESS_RANGE {use_file} [get_property PROGRAM.HW_CFGMEM $hw_dev_lindex]
