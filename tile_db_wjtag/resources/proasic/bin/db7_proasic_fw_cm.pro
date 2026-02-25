@@ -9,14 +9,14 @@
         
     </LiberoTargetDevice>
     <LogFile>
-        /home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/proasic/logs/project/db7_proasic_fw_cm.log
+        /home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/proasic/bin/db7_proasic_fw_cm.log
     </LogFile>
     <SerializationOption>
         Skip
     </SerializationOption>
     <programmer status="enable" type="FlashPro5" revision="UndefRev" connection="usb2.0">
         <name>
-            tile-fp5-01
+            S20059F4B3
         </name>
         <id>
             S20059F4B3
@@ -24,7 +24,7 @@
     </programmer>
     <programmer status="enable" type="FlashPro5" revision="UndefRev" connection="usb2.0">
         <name>
-            tile-fp5-02
+            S20059F8LM
         </name>
         <id>
             S20059F8LM
@@ -95,7 +95,7 @@
                     projectData/db7_proasic.pdb
                 </local>
                 <SelectedAction>
-                    VERIFY
+                    DEVICE_INFO
                 </SelectedAction>
             </Algo>
         </Device>

@@ -2,15 +2,19 @@ import pty
 import os
 import subprocess
 import errno
+import socket
+
+from lib.hw import *
 
 import threading
 import queue
 import json
 from datetime import datetime
 
-from flask import Flask, render_template, Response, request
+from flask import Flask, render_template, Response, request, jsonify
 
 app = Flask(__name__)
+
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -32,16 +36,37 @@ FPEXPRESS_LOG_FOLDER = os.path.join(RESOURCES_FOLDER, "proasic/logs/fpexpress")
 print(f"FPEXPRESS_LOG_FOLDER: {FPEXPRESS_LOG_FOLDER}")
 FPEXPRESS_TCL_FOLDER = os.path.join(RESOURCES_FOLDER, "proasic/tcl")
 print(f"FPEXPRESS_TCL_FOLDER: {FPEXPRESS_TCL_FOLDER}")
-
+HW_CONFIG_PATH = os.path.join(RESOURCES_FOLDER, "hw_config.json")
 
 os.makedirs(VIVADO_LOG_FOLDER, exist_ok=True)
 os.makedirs(VIVADO_TCL_FOLDER, exist_ok=True)
 os.makedirs(FPEXPRESS_LOG_FOLDER, exist_ok=True)
 os.makedirs(FPEXPRESS_TCL_FOLDER, exist_ok=True)
 
-
 VIVADO_SETTINGS = "/tools/Xilinx/Vivado_Lab/2022.2/settings64.sh"
 FLASH_PRO_CMD = "/microsemi/Libero_SoC_11.10/Libero_SoC/Designer/bin/FPExpress"
+
+with open(HW_CONFIG_PATH, "r") as f:
+# Load all server configs
+    ALL_HW_CONFIGS = json.load(f)
+
+# Get the current server hostname
+HOSTNAME = socket.gethostname()
+
+# Pick the matching config, or fallback
+HW_CONFIG = ALL_HW_CONFIGS.get(HOSTNAME)
+if HW_CONFIG is None:
+    raise RuntimeError(f"No hardware config found for hostname: {HOSTNAME}")
+
+# Build lookup maps
+KU_SERIAL_TO_SIDE = {
+    v["serial"]: side.upper() for side, v in HW_CONFIG["ku"]["sides"].items()
+}
+PROASIC_PROG_TO_SIDE = {
+    v["programmer"]: side.upper() for side, v in HW_CONFIG["proasic"]["sides"].items()
+}
+
+print(f"Loaded hardware config for {HOSTNAME}")
 
 
 job_queue = queue.Queue()
@@ -89,70 +114,86 @@ def run_process(command, source_type):
 # ProASIC handler
 # -----------------------------
 def _run_process_proasic(process, master_fd):
-    side_status = {}  # "A" or "B"
+    side_status = {}
+
+    # Create dynamic regex from config
+    programmers = "|".join(map(re.escape, PROASIC_PROG_TO_SIDE.keys()))
+    pattern = re.compile(
+        rf"programmer\s+'({programmers})'.*?\s(PASSED|FAILED)",
+        re.I
+    )
+
     try:
         with os.fdopen(master_fd) as stdout:
             for line in stdout:
                 yield {"source": "proasic", "line": line}
 
-                # Match PASSED/FAILED lines
-                match = re.match(
-                    r"programmer\s+'(tile-fp5-0[12])'.*?\s(PASSED|FAILED)",
-                    line,
-                    re.I
-                )
+                match = pattern.search(line)
                 if match:
-                    side = "A" if match[1] == "tile-fp5-01" else "B"
-                    side_status[side] = "success" if match[2].upper() == "PASSED" else "failure"
+                    programmer = match.group(1)
+                    result = match.group(2).upper()
+
+                    side = PROASIC_PROG_TO_SIDE.get(programmer)
+                    if side:
+                        side_status[side] = (
+                            "success" if result == "PASSED" else "failure"
+                        )
 
     except OSError as e:
         if e.errno != errno.EIO:
             raise
-
     finally:
         process.wait()
 
-    # Overall LED status
     status = "failure" if "failure" in side_status.values() else "success"
-    yield {"source": "proasic", "status": status, "side_status": side_status}
+
+    yield {
+        "source": "proasic",
+        "status": status,
+        "side_status": side_status
+    }
 
 
 # -----------------------------
 # Xilinx KU handler
 # -----------------------------
 def _run_process_ku(process, master_fd):
-    side_status = {}  # DNA-based
+    side_status = {}
+
+    serials = "|".join(map(re.escape, KU_SERIAL_TO_SIDE.keys()))
+    pattern = re.compile(
+        rf"\(({serials})\) Tile Operation (Success|Failure)!"
+    )
+
     try:
         with os.fdopen(master_fd) as stdout:
             for line in stdout:
                 yield {"source": "ku", "line": line}
 
-                # Match tile success/failure
-                match = re.match(
-                    r"\((210249B06E36|210249B07138)\) Tile Operation (Success|Failure)!",
-                    line
-                )
+                match = pattern.search(line)
                 if match:
-                    serial = match[1]
-                    side_status[serial] = "success" if match[2] == "Success" else "failure"
+                    serial = match.group(1)
+                    result = match.group(2)
+
+                    side = KU_SERIAL_TO_SIDE.get(serial)
+                    if side:
+                        side_status[side] = (
+                            "success" if result == "Success" else "failure"
+                        )
 
     except OSError as e:
         if e.errno != errno.EIO:
             raise
-
     finally:
         process.wait()
 
-    # Overall LED status
-    if error_detected:
-        status = "failure"
-    elif success_detected:
-        status = "success"
-    else:
-        # status = "success" if process.returncode == 0 else "failure"
-        status = "failure"
+    status = "failure" if "failure" in side_status.values() else "success"
 
-    yield {"source": "ku", "status": status, "side_status": side_status}
+    yield {
+        "source": "ku",
+        "status": status,
+        "side_status": side_status
+    }
 
 
 # -----------------------------
@@ -288,6 +329,39 @@ def run_action(action):
             yield f"data: {json.dumps(output)}\n\n"
 
     return Response(event_stream(), mimetype="text/event-stream")
+
+@app.route('/api/get_hostname', methods=['GET'])
+def get_hostname():
+    try:
+        # Get the actual system hostname of the server
+        hostname = socket.gethostname()
+        # print (f"Server hostname: {hostname}")
+        return jsonify({'hostname': hostname})
+    except Exception as e:
+        # print(f"Error getting hostname: {e}")
+        return jsonify({'hostname': 'Unknown Server'}), 500
+
+@app.route("/api/hw_config", methods=["GET"])
+def get_hw_config():
+    return jsonify(HW_CONFIG)
+
+@app.route("/api/detect_digilent", methods=["GET"])
+def api_detect_digilent():
+    return jsonify(detect_digilent_programmers())
+
+
+@app.route("/api/detect_flashpro", methods=["GET"])
+def api_detect_flashpro():
+    return jsonify(detect_flashpro_programmers())
+
+
+@app.route("/api/detect_programmers", methods=["GET"])
+def api_detect_programmers():
+    return jsonify({
+        "digilent": detect_digilent_programmers(),
+        "flashpro": detect_flashpro_programmers()
+    })
+
 
 
 @app.route("/")

@@ -46,7 +46,7 @@ foreach p $programmers {
         if {[catch {connect_hw_server -url $hw_server -allow_non_jtag -quiet} err]} {
             puts "($id) ERROR: Failed to connect to hw_server $hw_server: $err"
             set error_flag 1
-            continue
+            # continue
         }
         set connected_servers($hw_server) 1
     }
@@ -60,7 +60,7 @@ foreach p $programmers {
     if {[catch {open_hw_target $full_path -quiet} err]} {
         puts "($id) ERROR: Failed to open target $full_path: $err"
         set error_flag 1
-        continue
+        # continue
     }
 
     set devices [get_hw_devices]
@@ -69,7 +69,7 @@ foreach p $programmers {
         puts "($id) WARNING: No devices found on target $full_path!"
         set error_flag 1
         close_hw_target -quiet
-        continue
+        # continue
     }
 
     foreach d $devices {

@@ -1,20 +1,150 @@
-// ----------------------------
-// Hardware configuration
-// ----------------------------
-const hwConfig = {
-    ku: {
-        sides: {
-            a: { serial: "210249B06E36" },
-            b: { serial: "210249B07138" }
-        }
-    },
-    proasic: {
-        sides: {
-            a: { programmer: "tile-fp5-01" },
-            b: { programmer: "tile-fp5-02" }
-        }
+// Global variables
+let hwConfig = null;      // Your existing config
+let hwDetected = null;    // Detected hardware (Digilent + FlashPro)
+
+async function loadHwConfig() {
+    try {
+        // -------------------------------
+        // Load hwConfig from server
+        // -------------------------------
+        const configResponse = await fetch("/api/hw_config");
+        hwConfig = await configResponse.json();
+        console.log("Loaded HW config:", hwConfig);
+
+        // -------------------------------
+        // Load detected hardware
+        // -------------------------------
+        const detectedResponse = await fetch("/api/detect_programmers");
+        hwDetected = await detectedResponse.json();
+        console.log("Detected hardware from server:", hwDetected);
+
+        // -------------------------------
+        // Now initialize the UI
+        // -------------------------------
+        initializeUI();
+
+    } catch (error) {
+        console.error("Failed to load hardware or detected devices:", error);
     }
-};
+}
+
+
+function initializeUI() {
+    if (!hwConfig) {
+        console.error("HW config not loaded.");
+        return;
+    }
+
+    console.log("Initializing UI with config:", hwConfig);
+
+    // ----------------------------------
+    // Build dynamic maps (VERY IMPORTANT)
+    // ----------------------------------
+
+    // KU serial -> side map
+    window.kuSerialToSide = {};
+    Object.entries(hwConfig.ku.sides).forEach(([side, data]) => {
+        kuSerialToSide[data.serial] = side;
+    });
+
+    // ProASIC programmer -> side map
+    window.proasicProgToSide = {};
+    Object.entries(hwConfig.proasic.sides).forEach(([side, data]) => {
+        proasicProgToSide[data.programmer] = side;
+    });
+
+    console.log("KU serial map:", kuSerialToSide);
+    console.log("ProASIC programmer map:", proasicProgToSide);
+
+    // ----------------------------------
+    // Prebuild reusable regex strings
+    // ----------------------------------
+
+    const kuSerials = Object.values(hwConfig.ku.sides)
+        .map(s => s.serial)
+        .join("|");
+
+    window.kuDnaRegex = new RegExp(
+        `\\((${kuSerials})\\).*FUSE_DNA\\s*=\\s*([0-9A-F]+)`,
+        "i"
+    );
+
+    window.kuResultRegex = new RegExp(
+        `\\((${kuSerials})\\)\\s+Tile Operation\\s+(Success|Failure)!`,
+        "i"
+    );
+
+    console.log("KU regex ready.");
+
+    // ----------------------------------
+    // Optional: Show config info in UI
+    // ----------------------------------
+
+    const kuInfo = document.getElementById("ku_config_info");
+    if (kuInfo) {
+        kuInfo.innerText = Object.entries(hwConfig.ku.sides)
+            .map(([side, d]) => `Side ${side.toUpperCase()}: ${d.serial}`)
+            .join(" | ");
+    }
+
+    const proasicInfo = document.getElementById("proasic_config_info");
+    if (proasicInfo) {
+        proasicInfo.innerText = Object.entries(hwConfig.proasic.sides)
+            .map(([side, d]) => `Side ${side.toUpperCase()}: ${d.programmer}`)
+            .join(" | ");
+    }
+
+
+    // ------------------
+    // KU Boxes
+    // ------------------
+    const kuABox = document.getElementById("ku_side_a_box");
+    const kuBBox = document.getElementById("ku_side_b_box");
+
+    kuABox.innerText = `A: ${hwConfig.ku.sides.a.serial}`;
+    kuBBox.innerText = `B: ${hwConfig.ku.sides.b.serial}`;
+
+    // hwDetected.digilent contains the connected KU serials
+    const detectedKU = hwDetected.digilent.map(dev => dev.serial);    
+
+    if (!detectedKU.includes(hwConfig.ku.sides.a.serial)) {
+        kuABox.classList.add("blink-red");
+    } else {
+        kuABox.classList.remove("blink-red");
+    }
+
+    if (!detectedKU.includes(hwConfig.ku.sides.b.serial)) {
+        kuBBox.classList.add("blink-red");
+    } else {
+        kuBBox.classList.remove("blink-red");
+    }
+    // ------------------
+    // ProASIC Boxes
+    // ------------------
+    const proABox = document.getElementById("proasic_side_a_box");
+    const proBBox = document.getElementById("proasic_side_b_box");
+
+    proABox.innerText = `A: ${hwConfig.proasic.sides.a.programmer}`;
+    proBBox.innerText = `B: ${hwConfig.proasic.sides.b.programmer}`;
+
+    // hwDetected.flashpro contains the connected ProASIC programmers
+    const detectedPro = hwDetected.flashpro.map(dev => dev.serial);
+
+    if (!detectedPro.includes(hwConfig.proasic.sides.a.programmer)) {
+        proABox.classList.add("blink-red");
+    }
+    if (!detectedPro.includes(hwConfig.proasic.sides.b.programmer)) {
+        proBBox.classList.add("blink-red");
+    }
+
+
+    console.log("UI initialized successfully.");
+}
+
+
+
+document.addEventListener("DOMContentLoaded", loadHwConfig);
+
 
 // ----------------------------
 // Runtime state
@@ -535,3 +665,16 @@ function clearConsole(group) {
     const consoleDiv = document.getElementById(consoleId);
     if (consoleDiv) consoleDiv.innerHTML = "";
 }
+
+
+
+
+document.addEventListener('DOMContentLoaded', async () => {
+    try {
+        const response = await fetch('/api/get_hostname'); // Update to your actual endpoint
+        const data = await response.json();
+        document.getElementById('hostname-value').textContent = data.hostname;
+    } catch (error) {
+        document.getElementById('hostname-value').textContent = "Unknown";
+    }
+});

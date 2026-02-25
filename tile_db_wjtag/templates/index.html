@@ -9,13 +9,27 @@
 
 <body>
 
+    <div id="loading-overlay">
+        <div class="spinner"></div>
+        <div class="loading-text">Programming FPGA…</div>
+    </div>
+
+
     <div class="container">
 
         <h1>FPGA Programming Station</h1>
+        <div id="hostname-display" style="text-align: center; color: #666; margin-bottom: 20px;">
+            Host: <span id="hostname-value">Loading...</span>
+        </div>
 
         <!-- ================= XILINX GROUP ================= -->
         <div class="group">
-            <h2>Xilinx KU Operations</h2>
+            <h2 style="display: flex; align-items: center; gap: 10px;">
+                Xilinx KU Operations
+                <div id="ku_side_a_box" class="id-box">A: ---</div>
+                <div id="ku_side_b_box" class="id-box">B: ---</div>
+            </h2>
+
 
             <div class="row-with-console">
                 <div class="left-panel">
@@ -117,7 +131,12 @@
 
         <!-- ================= PROASIC GROUP ================= -->
         <div class="group">
-            <h2>ProASIC Operations</h2>
+            <h2 style="display: flex; align-items: center; gap: 10px;">
+                ProASIC Operations
+                <div id="proasic_side_a_box" class="id-box">A: ---</div>
+                <div id="proasic_side_b_box" class="id-box">B: ---</div>
+            </h2>
+
 
             <div class="row-with-console">
                 <div class="left-panel">
@@ -183,6 +202,7 @@
     </div>
 
     <script src="../static/scripts.js"></script>
+    <script src="../static/xtras.js"></script>
 </body>
 
 </html>

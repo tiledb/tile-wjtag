@@ -1,0 +1,30 @@
+{
+  "piro-almalinux0810-vserver-01.fysik.su.se": {
+    "ku": {
+      "sides": {
+        "a": { "serial": "210249B06E36" },
+        "b": { "serial": "210249B07138" }
+      }
+    },
+    "proasic": {
+      "sides": {
+        "a": { "programmer": "0059F4B3" },
+        "b": { "programmer": "0059F8LM" }
+      }
+    }
+  },
+  "piro-almalinux0810-vserver-02.fysik.su.se": {
+    "ku": {
+      "sides": {
+        "a": { "serial": "210249B0AAAA" },
+        "b": { "serial": "210249B0BBBB" }
+      }
+    },
+    "proasic": {
+      "sides": {
+        "a": { "programmer": "0059F4B3" },
+        "b": { "programmer": "0059F8LM" }
+      }
+    }
+  }
+}
