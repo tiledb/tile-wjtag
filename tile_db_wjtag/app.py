@@ -5,6 +5,7 @@ import errno
 import socket
 
 from lib.hw import *
+from lib.mariadb import *
 
 import threading
 import queue
@@ -161,25 +162,55 @@ def _run_process_ku(process, master_fd):
     side_status = {}
 
     serials = "|".join(map(re.escape, KU_SERIAL_TO_SIDE.keys()))
-    pattern = re.compile(
-        rf"\(({serials})\) Tile Operation (Success|Failure)!"
-    )
+    result_pattern = re.compile(rf"\(({serials})\) Tile Operation (Success|Failure)!")
+    dna_pattern = re.compile(rf"\(({serials})\).*FUSE_DNA\s*=\s*([0-9A-F]+)")
 
     try:
         with os.fdopen(master_fd) as stdout:
             for line in stdout:
-                yield {"source": "ku", "line": line}
+                yield {"source": "ku", "line": line.strip()}
 
-                match = pattern.search(line)
-                if match:
-                    serial = match.group(1)
-                    result = match.group(2)
+                # --- Check DNA ---
+                dna_match = dna_pattern.search(line)
+                if dna_match:
+                    serial = dna_match.group(1)
+                    dna = dna_match.group(2)
+
+                    # Yield raw DNA info
+                    yield {"source": "ku", "line": f"Found DNA for {serial}: {dna}"}
+
+                    # Check DB for this DNA
+                    db_info = check_dna_in_db(dna)
+                    # print(f"DB info for DNA {dna}: {db_info}")
+                    if db_info:
+                        yield {
+                            "source": "ku",
+                            "line": (
+                                f"DNA {dna} is registered in DB for side {db_info['side']}, "
+                                f"Serial: {db_info['serial_no']}, Batch: {db_info['batch_id']}"
+                            ),
+                            "db_status": "registered",
+                            "serial_no": db_info["serial_no"],
+                            "batch_id": db_info["batch_id"],
+                            "side": db_info["side"]
+                        }
+                    else:
+                        yield {
+                            "source": "ku",
+                            "line": f"DNA {dna} is NOT registered in DB",
+                            "db_status": "unregistered",
+                            "dna": dna
+                        }
+
+                # --- Check operation result ---
+                result_match = result_pattern.search(line)
+                if result_match:
+                    serial = result_match.group(1)
+                    result = result_match.group(2)
 
                     side = KU_SERIAL_TO_SIDE.get(serial)
                     if side:
-                        side_status[side] = (
-                            "success" if result == "Success" else "failure"
-                        )
+                        side_status[side] = "success" if result == "Success" else "failure"
 
     except OSError as e:
         if e.errno != errno.EIO:
@@ -189,11 +220,7 @@ def _run_process_ku(process, master_fd):
 
     status = "failure" if "failure" in side_status.values() else "success"
 
-    yield {
-        "source": "ku",
-        "status": status,
-        "side_status": side_status
-    }
+    yield {"source": "ku", "status": status, "side_status": side_status}
 
 
 # -----------------------------
@@ -231,7 +258,7 @@ def build_command(action):
         return (
             f"bash -c 'source {VIVADO_SETTINGS} && "
             f"vivado_lab -mode batch -log {log_file} -journal {jou_file} -source {tcl}'"
-        ), "vivado"
+        ), "ku"
         
     elif action == "program_ku":
         
@@ -243,7 +270,7 @@ def build_command(action):
         return (
             f"bash -c 'source {VIVADO_SETTINGS} && "
             f"vivado_lab -mode batch -log {log_file} -journal {jou_file} -source {tcl}'"
-        ), "vivado"
+        ), "ku"
 
     elif action == "program_ku_flash":
         
@@ -255,7 +282,7 @@ def build_command(action):
         return (
             f"bash -c 'source {VIVADO_SETTINGS} && "
             f"vivado_lab -mode batch -log {log_file} -journal {jou_file} -source {tcl}'"
-        ), "vivado"
+        ), "ku"
         
     elif action == "verify_ku_flash":
 
@@ -267,7 +294,7 @@ def build_command(action):
         return (
             f"bash -c 'source {VIVADO_SETTINGS} && "
             f"vivado_lab -mode batch -log {log_file} -journal {jou_file} -source {tcl}'"
-        ), "vivado"
+        ), "ku"
 
 
     elif action == "get_proasic_info":
@@ -282,7 +309,7 @@ def build_command(action):
             f'logfile:"{log_file}"'
         )
 
-        return cmd, "flashpro"
+        return cmd, "proasic"
 
     elif action == "verify_proasic":
         tcl = os.path.join(FPEXPRESS_TCL_FOLDER, "verify_device.tcl")
@@ -294,7 +321,7 @@ def build_command(action):
             f'console_mode:show '
             f'logfile:"{log_file}"'
         )
-        return cmd, "flashpro"
+        return cmd, "proasic"
 
     elif action == "program_proasic":
         tcl = os.path.join(FPEXPRESS_TCL_FOLDER, "program_device.tcl")
@@ -306,7 +333,7 @@ def build_command(action):
             f'console_mode:show '
             f'logfile:"{log_file}"'
         )
-        return cmd, "flashpro"
+        return cmd, "proasic"
 
     else:
         return None, None

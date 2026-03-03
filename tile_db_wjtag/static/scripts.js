@@ -28,6 +28,59 @@ async function loadHwConfig() {
     }
 }
 
+async function updateDetectedHW() {
+    if (!hwConfig) return;
+
+    try {
+        const response = await fetch("/api/detect_programmers");
+        hwDetected = await response.json();
+
+        // -----------------------
+        // KU
+        // -----------------------
+        const kuABox = document.getElementById("ku_side_a_box");
+        const kuBBox = document.getElementById("ku_side_b_box");
+
+        const detectedKU = hwDetected.digilent.map(dev => dev.serial);
+
+        if (!detectedKU.includes(hwConfig.ku.sides.a.serial)) {
+            kuABox.classList.add("blink-red");
+        } else {
+            kuABox.classList.remove("blink-red");
+        }
+
+        if (!detectedKU.includes(hwConfig.ku.sides.b.serial)) {
+            kuBBox.classList.add("blink-red");
+        } else {
+            kuBBox.classList.remove("blink-red");
+        }
+
+        // -----------------------
+        // ProASIC
+        // -----------------------
+        const proABox = document.getElementById("proasic_side_a_box");
+        const proBBox = document.getElementById("proasic_side_b_box");
+
+        const detectedPro = hwDetected.flashpro.map(dev => dev.serial);
+
+        if (!detectedPro.includes(hwConfig.proasic.sides.a.programmer)) {
+            proABox.classList.add("blink-red");
+        } else {
+            proABox.classList.remove("blink-red");
+        }
+
+        if (!detectedPro.includes(hwConfig.proasic.sides.b.programmer)) {
+            proBBox.classList.add("blink-red");
+        } else {
+            proBBox.classList.remove("blink-red");
+        }
+
+    } catch (err) {
+        console.error("Failed to detect hardware:", err);
+    }
+}
+
+
 
 function initializeUI() {
     if (!hwConfig) {
@@ -175,8 +228,36 @@ function checkLedStatus(type) {
     return failed ? "failure" : "success";
 }
 
+// ----------------------------
+// Update DB info and check equality
+// ----------------------------
+function updateDbBoxes() {
+    const sideA = {
+        serial: document.getElementById("ku_side_a_serial").innerText,
+        batch: document.getElementById("ku_side_a_batch").innerText
+    };
+    const sideB = {
+        serial: document.getElementById("ku_side_b_serial").innerText,
+        batch: document.getElementById("ku_side_b_batch").innerText
+    };
 
-function startAction(action, type) {
+    const equal = sideA.serial === sideB.serial && sideA.batch === sideB.batch;
+
+    ["db_side_a_box", "db_side_b_box"].forEach(id => {
+        const box = document.getElementById(id);
+        if (!box) return;
+        box.classList.remove("blink-red", "green-text");
+        if (!equal) {
+            box.classList.add("blink-red");
+        } else {
+            box.classList.add("green-text");
+        }
+    });
+}
+
+async function startAction(action, type) {
+    // Update HW status before starting
+    await updateDetectedHW();
 
     let group = null;
 
@@ -259,6 +340,18 @@ function startAction(action, type) {
                 parseKuProgram(data.line);
             } else if (type === "ku_flash_program") {
                 parseKuFlashProgram(data.line);
+            }
+        }
+
+        if (data.source === "ku") {
+            if (data.db_status === "registered") {
+                // Update DB info in the UI
+                const side = data.side.toLowerCase(); // 'a' or 'b'
+                document.getElementById(`ku_side_${side}_serial`).innerText = data.serial_no;
+                document.getElementById(`ku_side_${side}_batch`).innerText = data.batch_id;
+
+                // Compare both sides
+                updateDbBoxes();
             }
         }
 
@@ -387,12 +480,14 @@ function parseIDs(line, type) {
             const programmer = match[1];
             const fsn = match[2];
 
-            if (programmer === hwConfig.proasic.sides.a.programmer) {
+            // Side A
+            if (programmer.trim().toUpperCase().includes(hwConfig.proasic.sides.a.programmer.trim().toUpperCase())) {
                 const a = document.getElementById("proasic_side_a");
                 if (a) a.innerText = fsn;
             }
 
-            if (programmer === hwConfig.proasic.sides.b.programmer) {
+            // Side B
+            if (programmer.trim().toUpperCase().includes(hwConfig.proasic.sides.b.programmer.trim().toUpperCase())) {
                 const b = document.getElementById("proasic_side_b");
                 if (b) b.innerText = fsn;  
             }
@@ -401,8 +496,10 @@ function parseIDs(line, type) {
 }
 
 
-// The rest of the parse functions remain mostly identical but use hwConfig for serials and programmers:
 
+// ----------------------------
+// ProASIC: parse verify lines
+// ----------------------------
 function parseVerifyLine(line) {
     const statusRegex = /programmer\s+'([^']+)'.*VERIFY\s+(PASSED|FAILED)/i;
     const idRegex = /programmer\s+'([^']+)'.*EXPORT FSN\[48\]\s*=\s*([0-9a-fA-F]+)/i;
@@ -411,16 +508,17 @@ function parseVerifyLine(line) {
     if ((match = line.match(statusRegex))) {
         const programmer = match[1];
         const result = match[2].toUpperCase();
+        const className = result === "PASSED" ? "passed" : "failed";
 
-        if (programmer === hwConfig.proasic.sides.a.programmer) {
+        if (programmer.trim().toUpperCase().includes(hwConfig.proasic.sides.a.programmer.trim().toUpperCase())) {
             const span = document.getElementById("verify_side_a_status");
             span.innerText = result;
-            span.className = result === "PASSED" ? "passed" : "failed";
+            span.className = className;
         }
-        if (programmer === hwConfig.proasic.sides.b.programmer) {
+        if (programmer.trim().toUpperCase().includes(hwConfig.proasic.sides.b.programmer.trim().toUpperCase())) {
             const span = document.getElementById("verify_side_b_status");
             span.innerText = result;
-            span.className = result === "PASSED" ? "passed" : "failed";
+            span.className = className;
         }
     }
 
@@ -428,18 +526,16 @@ function parseVerifyLine(line) {
         const programmer = match[1];
         const fsn = match[2];
 
-        if (programmer === hwConfig.proasic.sides.a.programmer) {
+        if (programmer.trim().toUpperCase().includes(hwConfig.proasic.sides.a.programmer.trim().toUpperCase())) {
             document.getElementById("verify_side_a_id").innerText = fsn;
         }
-        if (programmer === hwConfig.proasic.sides.b.programmer) {
+        if (programmer.trim().toUpperCase().includes(hwConfig.proasic.sides.b.programmer.trim().toUpperCase())) {
             document.getElementById("verify_side_b_id").innerText = fsn;
         }
     }
 }
 
-// ----------------------------
-// ProASIC: parse program lines
-// ----------------------------
+
 function parseProgramLine(line) {
     const statusRegex = /programmer\s+'([^']+)'.*Chain programming\s+(PASSED|FAILED)/i;
     const idRegex = /programmer\s+'([^']+)'.*EXPORT FSN\[48\]\s*=\s*([0-9a-fA-F]+)/i;
@@ -467,49 +563,11 @@ function parseProgramLine(line) {
         const programmer = match[1];
         const fsn = match[2];
 
-        if (programmer === hwConfig.proasic.sides.a.programmer) {
+        if (programmer.trim().toUpperCase().includes(hwConfig.proasic.sides.a.programmer.trim().toUpperCase())) {
             document.getElementById("program_side_a_id").innerText = fsn;
         }
-        if (programmer === hwConfig.proasic.sides.b.programmer) {
+        if (programmer.trim().toUpperCase().includes(hwConfig.proasic.sides.b.programmer.trim().toUpperCase())) {
             document.getElementById("program_side_b_id").innerText = fsn;
-        }
-    }
-}
-
-// ----------------------------
-// ProASIC: parse verify lines
-// ----------------------------
-function parseVerifyLine(line) {
-    const statusRegex = /programmer\s+'([^']+)'.*VERIFY\s+(PASSED|FAILED)/i;
-    const idRegex = /programmer\s+'([^']+)'.*EXPORT FSN\[48\]\s*=\s*([0-9a-fA-F]+)/i;
-    let match;
-
-    if ((match = line.match(statusRegex))) {
-        const programmer = match[1];
-        const result = match[2].toUpperCase();
-        const className = result === "PASSED" ? "passed" : "failed";
-
-        if (programmer === hwConfig.proasic.sides.a.programmer) {
-            const span = document.getElementById("verify_side_a_status");
-            span.innerText = result;
-            span.className = className;
-        }
-        if (programmer === hwConfig.proasic.sides.b.programmer) {
-            const span = document.getElementById("verify_side_b_status");
-            span.innerText = result;
-            span.className = className;
-        }
-    }
-
-    if ((match = line.match(idRegex))) {
-        const programmer = match[1];
-        const fsn = match[2];
-
-        if (programmer === hwConfig.proasic.sides.a.programmer) {
-            document.getElementById("verify_side_a_id").innerText = fsn;
-        }
-        if (programmer === hwConfig.proasic.sides.b.programmer) {
-            document.getElementById("verify_side_b_id").innerText = fsn;
         }
     }
 }
@@ -533,6 +591,7 @@ function parseKuID(line) {
         document.getElementById("ku_side_b_dna").innerText = dna;
     }
 }
+
 
 // ----------------------------
 // KU: parse verify lines
