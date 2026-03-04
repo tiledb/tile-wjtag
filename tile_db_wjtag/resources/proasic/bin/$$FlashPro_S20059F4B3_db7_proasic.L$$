@@ -18,3 +18,7 @@ EXPORT ACTEL_SLOG_UROW[128] = 64e40309a3edf43a7f70f3cb6880fa01
 Fri Feb 27 08:50:48 2026
 EXPORT ACTEL_SLOG_UROW[128] = 64e40349a3edf43a7f70f3cb6880fa01
 
+/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/proasic/bin/db7_proasic.pdb
+Wed Mar  4 10:55:42 2026
+EXPORT ACTEL_SLOG_UROW[128] = 64e40389a3edf43a7f70f3cb6880fa01
+

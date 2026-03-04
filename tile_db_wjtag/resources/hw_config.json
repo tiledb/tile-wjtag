@@ -1,5 +1,11 @@
 {
   "piro-almalinux0810-vserver-01.fysik.su.se": {
+    "ha_power_control": {
+      "sides": {
+        "a": "switch.piro_atlas_prog_station_ps_db1a",
+        "b": "switch.piro_atlas_prog_station_ps_db1b"
+      }
+    },
     "ku": {
       "sides": {
         "a": { "serial": "210249B06E36" },
@@ -14,6 +20,12 @@
     }
   },
   "piro-almalinux0810-vserver-02.fysik.su.se": {
+    "ha_power_control": {
+      "sides": {
+        "a": "switch.piro_atlas_prog_station_ps_db2a",
+        "b": "switch.piro_atlas_prog_station_ps_db2b"
+      }
+    },
     "ku": {
       "sides": {
         "a": { "serial": "210249B0AAAA" },
@@ -22,8 +34,8 @@
     },
     "proasic": {
       "sides": {
-        "a": { "programmer": "0059F4B3" },
-        "b": { "programmer": "0059F8LM" }
+        "a": { "programmer": "0059F4B0" },
+        "b": { "programmer": "0059F8L0" }
       }
     }
   }

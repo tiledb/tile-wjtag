@@ -6,6 +6,8 @@ import socket
 
 from lib.hw import *
 from lib.mariadb import *
+from lib.ha import HomeAssistantClient
+
 
 import threading
 import queue
@@ -19,6 +21,15 @@ import psutil
 import signal
 
 
+
+HA_URL = "http://ha.piro-atlas-lab.fysik.su.se:8123"
+HA_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiI4YjEyZWE1Yzc4NTE0Y2FmODRlNWQzYWQwMmIzZTNjNyIsImlhdCI6MTc3MTIxODg3MCwiZXhwIjoyMDg2NTc4ODcwfQ.7BnKN_KS1Pa5SuKWXXDv2xoZtkSH05ttgAq3OSzCQdk"
+
+ha = HomeAssistantClient(
+    base_url=HA_URL,
+    token=HA_TOKEN,
+    timeout=5
+)
 
 app = Flask(__name__)
 
@@ -72,6 +83,17 @@ KU_SERIAL_TO_SIDE = {
 PROASIC_PROG_TO_SIDE = {
     v["programmer"]: side.upper() for side, v in HW_CONFIG["proasic"]["sides"].items()
 }
+ha_cfg = HW_CONFIG.get("ha_power_control", {}).get("sides", {})
+
+if not isinstance(ha_cfg, dict):
+    raise RuntimeError("Invalid ha_power_control config")
+
+SIDE_TO_HA_ENTITY = {
+    side.upper(): entity
+    for side, entity in ha_cfg.items()
+}
+
+
 
 print(f"Loaded hardware config for {HOSTNAME}")
 
@@ -416,6 +438,37 @@ def refresh_processes():
         except Exception as e:
             print(f"Error killing process {proc.info['name']}: {e}")
     return jsonify({"status": "ok", "killed": killed})
+
+
+@app.route("/api/power_state/<side>", methods=["GET"])
+def get_power_state(side):
+    entity_id = SIDE_TO_HA_ENTITY.get(side.upper())
+    if not entity_id:
+        return jsonify({"error": "invalid side"}), 400
+
+    try:
+        state = ha.get_state_value(entity_id)
+        return jsonify({"state": state})
+    except Exception as e:
+        return jsonify({"state": "unknown", "error": str(e)}), 500
+
+
+@app.route("/api/power_toggle/<side>", methods=["POST"])
+def toggle_power(side):
+    entity_id = SIDE_TO_HA_ENTITY.get(side.upper())
+    if not entity_id:
+        return jsonify({"error": "invalid side"}), 400
+
+    try:
+        ha.call_service(
+            domain="switch",
+            service="toggle",
+            data={"entity_id": entity_id}
+        )
+        return jsonify({"status": "ok"})
+    except Exception as e:
+        return jsonify({"status": "error", "error": str(e)}), 500
+
 
 
 @app.route("/")

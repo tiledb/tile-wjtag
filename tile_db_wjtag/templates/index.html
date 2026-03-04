@@ -41,10 +41,17 @@
         <div class="group">
             <h2 style="display: flex; align-items: center; gap: 10px;">
                 Xilinx KU Operations
-                <div id="ku_side_a_box" class="id-box">SideA ProgrammerID: ---</div>
+                <div class="programmer-control">
+                    <button id="power_a_btn" class="power-btn off">OFF</button>
+                    <div class="id-box"> <span id="ku_side_a_prog">---</span></div>
+                </div>
                 <div id="db_side_a_box" class="db-box">DBSerial: <span id="ku_side_a_serial">---</span>
                     DBBatch: <span id="ku_side_a_batch">---</span> </div>
-                <div id="ku_side_b_box" class="id-box">SideB ProgrammerID:---</div>
+                <div class="programmer-control">
+                    <button id="power_b_btn" class="power-btn off">OFF</button>
+                    <div class="id-box"> <span id="ku_side_b_prog">---</span></div>
+                </div>
+
                 <div id="db_side_b_box" class="db-box">DBSerial: <span id="ku_side_b_serial">---</span>
                     DBBatch: <span id="ku_side_b_batch">---</span> </div>
             </h2>
@@ -142,6 +149,7 @@
                     <div id="ku_console" class="console"></div>
                 </div>
             </div>
+
 
 
         </div>

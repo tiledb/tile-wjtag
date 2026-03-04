@@ -38,8 +38,8 @@ async function updateDetectedHW() {
         // -----------------------
         // KU
         // -----------------------
-        const kuABox = document.getElementById("ku_side_a_box");
-        const kuBBox = document.getElementById("ku_side_b_box");
+        const kuABox = document.getElementById("ku_side_a_prog");
+        const kuBBox = document.getElementById("ku_side_b_prog");
 
         const detectedKU = hwDetected?.digilent?.map(dev => dev.serial) || [];
         
@@ -152,8 +152,8 @@ function initializeUI() {
     // ------------------
     // KU Boxes
     // ------------------
-    const kuABox = document.getElementById("ku_side_a_box");
-    const kuBBox = document.getElementById("ku_side_b_box");
+    const kuABox = document.getElementById("ku_side_a_prog");
+    const kuBBox = document.getElementById("ku_side_b_prog");
 
     kuABox.innerText = `A: ${hwConfig.ku.sides.a.serial}`;
     kuBBox.innerText = `B: ${hwConfig.ku.sides.b.serial}`;
@@ -803,3 +803,45 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.getElementById('hostname-value').textContent = "Unknown";
     }
 });
+
+
+async function updatePowerState(side) {
+    const res = await fetch(`/api/power_state/${side}`);
+    const data = await res.json();
+
+    const btn = document.getElementById(`power_${side}_btn`);
+
+    if (data.state === "on") {
+        btn.classList.remove("off");
+        btn.classList.add("on");
+        btn.innerText = "ON";
+    } else {
+        btn.classList.remove("on");
+        btn.classList.add("off");
+        btn.innerText = "OFF";
+    }
+}
+
+async function togglePower(side) {
+    await fetch(`/api/power_toggle/${side}`, { method: "POST" });
+    setTimeout(() => updatePowerState(side), 500);
+}
+
+document.getElementById("power_a_btn").addEventListener("click", () => {
+    togglePower("a");
+});
+
+
+document.getElementById("power_b_btn").addEventListener("click", () => {
+    togglePower("b");
+});
+
+// Auto refresh every 5 seconds
+setInterval(() => {
+    updatePowerState("a");
+    updatePowerState("b");
+}, 5000);
+
+// Initial load
+updatePowerState("a");
+updatePowerState("b");
