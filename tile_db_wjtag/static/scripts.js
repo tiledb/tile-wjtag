@@ -41,7 +41,8 @@ async function updateDetectedHW() {
         const kuABox = document.getElementById("ku_side_a_box");
         const kuBBox = document.getElementById("ku_side_b_box");
 
-        const detectedKU = hwDetected.digilent.map(dev => dev.serial);
+        const detectedKU = hwDetected?.digilent?.map(dev => dev.serial) || [];
+        
 
         if (!detectedKU.includes(hwConfig.ku.sides.a.serial)) {
             kuABox.classList.add("blink-red");
@@ -61,7 +62,7 @@ async function updateDetectedHW() {
         const proABox = document.getElementById("proasic_side_a_box");
         const proBBox = document.getElementById("proasic_side_b_box");
 
-        const detectedPro = hwDetected.flashpro.map(dev => dev.serial);
+        const detectedPro = hwDetected?.flashpro?.map(dev => dev.serial) || [];
 
         if (!detectedPro.includes(hwConfig.proasic.sides.a.programmer)) {
             proABox.classList.add("blink-red");
@@ -352,7 +353,19 @@ async function startAction(action, type) {
 
                 // Compare both sides
                 updateDbBoxes();
-            }
+            } 
+            // else if (data.db_status === "unregistered") {
+            //     const map = {
+            //         [hwConfig.ku.sides.a.serial]: "a",
+            //         [hwConfig.ku.sides.b.serial]: "b"
+            //     };
+            //     const side = map[sideKey] || sideKey;
+            //     console.log(side);
+            //     document.getElementById(`ku_side_${side}_serial`).innerText = "Not in DBbase";
+            //     document.getElementById(`ku_side_${side}_batch`).innerText = "Not in DBbase";
+            //     updateDbBoxes();
+            // }
+
         }
 
         // ------------------------
@@ -731,6 +744,59 @@ function clearConsole(group) {
 document.addEventListener('DOMContentLoaded', async () => {
     try {
         const response = await fetch('/api/get_hostname'); // Update to your actual endpoint
+        const data = await response.json();
+        document.getElementById('hostname-value').textContent = data.hostname;
+    } catch (error) {
+        document.getElementById('hostname-value').textContent = "Unknown";
+    }
+});
+
+
+// Update CPU/RAM every 5 seconds
+async function updateSystemUsage() {
+    try {
+        const res = await fetch("/api/system_usage");
+        const data = await res.json();
+        const cpuSpan = document.getElementById("cpu-usage");
+        const ramSpan = document.getElementById("ram-usage");
+
+        cpuSpan.innerText = data.cpu + "%";
+        ramSpan.innerText = data.ram + "%";
+
+        // Highlight if high usage
+        cpuSpan.classList.toggle("cpu-high", data.cpu > 80);
+        ramSpan.classList.toggle("ram-high", data.ram > 80);
+
+    } catch (err) {
+        console.error("Failed to fetch system usage:", err);
+    }
+}
+setInterval(updateSystemUsage, 5000);
+updateSystemUsage(); // initial call
+
+// Refresh processes
+document.getElementById("refresh-processes").addEventListener("click", async () => {
+    const btn = document.getElementById("refresh-processes");
+    btn.disabled = true;
+    btn.innerText = "Refreshing...";
+    try {
+        const res = await fetch("/api/refresh_processes", { method: "POST" });
+        const data = await res.json();
+        console.log("Killed processes:", data.killed);
+        alert("Processes refreshed: " + (data.killed.length ? data.killed.join(", ") : "None"));
+    } catch (err) {
+        console.error(err);
+        alert("Failed to refresh processes.");
+    } finally {
+        btn.disabled = false;
+        btn.innerText = "Refresh Processes";
+    }
+});
+
+// Set hostname on load
+document.addEventListener('DOMContentLoaded', async () => {
+    try {
+        const response = await fetch('/api/get_hostname');
         const data = await response.json();
         document.getElementById('hostname-value').textContent = data.hostname;
     } catch (error) {

@@ -14,6 +14,12 @@ from datetime import datetime
 
 from flask import Flask, render_template, Response, request, jsonify
 
+
+import psutil
+import signal
+
+
+
 app = Flask(__name__)
 
 
@@ -253,6 +259,8 @@ def build_command(action):
         log_file = os.path.join(VIVADO_LOG_FOLDER, f"vivado_{timestamp}_{action}.log")
         jou_file = os.path.join(VIVADO_LOG_FOLDER, f"vivado_{timestamp}_{action}.jou")
         
+        print(f"Log file: {log_file}")
+        
         tcl = os.path.join(VIVADO_TCL_FOLDER, "get_ku_properties.tcl")
         
         return (
@@ -389,6 +397,25 @@ def api_detect_programmers():
         "flashpro": detect_flashpro_programmers()
     })
 
+
+@app.route("/api/system_usage", methods=["GET"])
+def system_usage():
+    cpu_percent = psutil.cpu_percent(interval=0.5)
+    ram_percent = psutil.virtual_memory().percent
+    return jsonify({"cpu": cpu_percent, "ram": ram_percent})
+
+@app.route("/api/refresh_processes", methods=["POST"])
+def refresh_processes():
+    # Kill all vivado_lab and cs_server processes
+    killed = []
+    for proc in psutil.process_iter(['pid', 'name']):
+        try:
+            if proc.info['name'] in ("vivado_lab", "cs_server"):
+                os.kill(proc.info['pid'], signal.SIGTERM)
+                killed.append(proc.info['name'])
+        except Exception as e:
+            print(f"Error killing process {proc.info['name']}: {e}")
+    return jsonify({"status": "ok", "killed": killed})
 
 
 @app.route("/")

@@ -18,9 +18,24 @@
     <div class="container">
 
         <h1>FPGA Programming Station</h1>
-        <div id="hostname-display" style="text-align: center; color: #666; margin-bottom: 20px;">
-            Host: <span id="hostname-value">Loading...</span>
+        <div id="server-top-bar">
+            <!-- Left: system info -->
+            <div id="system-info" class="top-bar-box">
+                <span>CPU: <span id="cpu-usage">--%</span></span> |
+                <span>RAM: <span id="ram-usage">--%</span></span>
+            </div>
+
+            <!-- Center: hostname -->
+            <div id="hostname-display" class="top-bar-box">
+                Host: <span id="hostname-value">Loading...</span>
+            </div>
+
+            <!-- Right: refresh button -->
+            <button id="refresh-processes" class="top-bar-box btn-refresh">
+                Refresh Processes
+            </button>
         </div>
+
 
         <!-- ================= XILINX GROUP ================= -->
         <div class="group">
