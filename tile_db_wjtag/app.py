@@ -15,7 +15,7 @@ import json
 from datetime import datetime
 
 from flask import Flask, render_template, Response, request, jsonify
-
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 import psutil
 import signal
@@ -32,6 +32,10 @@ ha = HomeAssistantClient(
 )
 
 app = Flask(__name__)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_prefix=1)
+# app.wsgi_app = ProxyFix(app.wsgi_app)
+# app.config['APPLICATION_ROOT'] = '/fpga-prog-station-1'
+
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))

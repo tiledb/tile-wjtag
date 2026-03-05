@@ -4,7 +4,10 @@
 <head>
     <meta charset="UTF-8">
     <title>FPGA Programming Station</title>
-    <link rel="stylesheet" href="../static/styles.css">
+    <!-- <base href="/fpga-prog-station-1/"> -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+
+    <!-- <link rel="stylesheet" href="../static/styles.css"> -->
 </head>
 
 <body>
@@ -228,8 +231,10 @@
 
     </div>
 
-    <script src="../static/scripts.js"></script>
-    <script src="../static/xtras.js"></script>
+
+
 </body>
+<script src="{{ url_for('static', filename='scripts.js') }}"></script>
+<script src="{{ url_for('static', filename='xtras.js') }}"></script>
 
 </html>

@@ -8,8 +8,24 @@
     },
     "ku": {
       "sides": {
-        "a": { "serial": "210249B06E36" },
-        "b": { "serial": "210249B07138" }
+        "a": {
+          "serial": "210249B06E36",
+          "hw_server": "localhost:3121",
+          "target": "xilinx_tcf/Digilent/",
+          "device": "xcku035",
+          "bitfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db6v5_top.bit",
+          "binfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db6v5_top.bin",
+          "ltxfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db6v5_top.ltx"
+        },
+        "b": {
+          "serial": "210249B07138",
+          "hw_server": "localhost:3121",
+          "target": "xilinx_tcf/Digilent/",
+          "device": "xcku035",
+          "bitfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db6v5_top.bit",
+          "binfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db6v5_top.bin",
+          "ltxfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db6v5_top.ltx"
+        }
       }
     },
     "proasic": {
@@ -28,8 +44,24 @@
     },
     "ku": {
       "sides": {
-        "a": { "serial": "210249B0AAAA" },
-        "b": { "serial": "210249B0BBBB" }
+        "a": {
+          "serial": "210249B06E30",
+          "hw_server": "localhost:3121",
+          "target": "xilinx_tcf/Digilent/",
+          "device": "xcku035",
+          "bitfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db6v5_top.bit",
+          "binfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db6v5_top.bin",
+          "ltxfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db6v5_top.ltx"
+        },
+        "b": {
+          "serial": "210249B07130",
+          "hw_server": "localhost:3121",
+          "target": "xilinx_tcf/Digilent/",
+          "device": "xcku035",
+          "bitfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db6v5_top.bit",
+          "binfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db6v5_top.bin",
+          "ltxfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db6v5_top.ltx"
+        }
       }
     },
     "proasic": {

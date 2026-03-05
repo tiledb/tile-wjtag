@@ -3,9 +3,46 @@ puts "=== Starting FPGA Programming ==="
 # -----------------------------
 # Define programmers
 # -----------------------------
-set programmers {
-    { hw_server "localhost:3121" target "xilinx_tcf/Digilent/" id "210249B06E36" device "xcku035" binfile "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db6v5_top.bin" ltxfile "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db6v5_top.ltx" }
-    { hw_server "localhost:3121" target "xilinx_tcf/Digilent/" id "210249B07138" device "xcku035" binfile "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db6v5_top.bin" ltxfile "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db6v5_top.ltx" }
+
+
+package require json
+
+# Get and print current working directory
+set current_dir [pwd]
+puts "=== Execution Directory: $current_dir ==="
+
+set json_file "resources/hw_config.json"
+set hostname [info hostname]
+puts "=== Execution Host: $hostname ==="
+
+
+# Read and parse JSON
+set fp [open $json_file r]
+set file_data [read $fp]
+close $fp
+set data [json::json2dict $file_data]
+
+set programmers {}
+
+# Check if current host exists in config
+if {[dict exists $data $hostname]} {
+    set ku_sides [dict get $data $hostname ku sides]
+    
+    # Iterate through sides (a, b, etc.)
+    dict for {side info} $ku_sides {
+        # Construct the internal list format used by your loop
+        lappend programmers [list \
+            hw_server [dict get $info hw_server] \
+            target    [dict get $info target] \
+            id        [dict get $info serial] \
+            device    [dict get $info device] \
+            binfile   [dict get $info binfile] \
+            ltxfile   [dict get $info ltxfile] \
+        ]
+    }
+} else {
+    puts "Error: No configuration found for host $hostname"
+    exit 1
 }
 
 # ==============================

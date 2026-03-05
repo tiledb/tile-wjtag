@@ -7,14 +7,14 @@ async function loadHwConfig() {
         // -------------------------------
         // Load hwConfig from server
         // -------------------------------
-        const configResponse = await fetch("/api/hw_config");
+        const configResponse = await fetch("api/hw_config");
         hwConfig = await configResponse.json();
         console.log("Loaded HW config:", hwConfig);
 
         // -------------------------------
         // Load detected hardware
         // -------------------------------
-        const detectedResponse = await fetch("/api/detect_programmers");
+        const detectedResponse = await fetch("api/detect_programmers");
         hwDetected = await detectedResponse.json();
         console.log("Detected hardware from server:", hwDetected);
 
@@ -32,7 +32,7 @@ async function updateDetectedHW() {
     if (!hwConfig) return;
 
     try {
-        const response = await fetch("/api/detect_programmers");
+        const response = await fetch("api/detect_programmers");
         hwDetected = await response.json();
 
         // -----------------------
@@ -315,7 +315,7 @@ async function startAction(action, type) {
     }
 
 
-    activeEventSources[group] = new EventSource("/run/" + action);
+    activeEventSources[group] = new EventSource("run/" + action);
     const eventSource = activeEventSources[group];
 
     eventSource.onmessage = function(event) {
@@ -743,7 +743,7 @@ function clearConsole(group) {
 
 document.addEventListener('DOMContentLoaded', async () => {
     try {
-        const response = await fetch('/api/get_hostname'); // Update to your actual endpoint
+        const response = await fetch('api/get_hostname'); // Update to your actual endpoint
         const data = await response.json();
         document.getElementById('hostname-value').textContent = data.hostname;
     } catch (error) {
@@ -755,7 +755,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 // Update CPU/RAM every 5 seconds
 async function updateSystemUsage() {
     try {
-        const res = await fetch("/api/system_usage");
+        const res = await fetch("api/system_usage");
         const data = await res.json();
         const cpuSpan = document.getElementById("cpu-usage");
         const ramSpan = document.getElementById("ram-usage");
@@ -780,7 +780,7 @@ document.getElementById("refresh-processes").addEventListener("click", async () 
     btn.disabled = true;
     btn.innerText = "Refreshing...";
     try {
-        const res = await fetch("/api/refresh_processes", { method: "POST" });
+        const res = await fetch("api/refresh_processes", { method: "POST" });
         const data = await res.json();
         console.log("Killed processes:", data.killed);
         alert("Processes refreshed: " + (data.killed.length ? data.killed.join(", ") : "None"));
@@ -796,7 +796,7 @@ document.getElementById("refresh-processes").addEventListener("click", async () 
 // Set hostname on load
 document.addEventListener('DOMContentLoaded', async () => {
     try {
-        const response = await fetch('/api/get_hostname');
+        const response = await fetch('api/get_hostname');
         const data = await response.json();
         document.getElementById('hostname-value').textContent = data.hostname;
     } catch (error) {
@@ -806,7 +806,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 
 async function updatePowerState(side) {
-    const res = await fetch(`/api/power_state/${side}`);
+    const res = await fetch(`api/power_state/${side}`);
     const data = await res.json();
 
     const btn = document.getElementById(`power_${side}_btn`);
@@ -823,7 +823,7 @@ async function updatePowerState(side) {
 }
 
 async function togglePower(side) {
-    await fetch(`/api/power_toggle/${side}`, { method: "POST" });
+    await fetch(`api/power_toggle/${side}`, { method: "POST" });
     setTimeout(() => updatePowerState(side), 500);
 }
 
