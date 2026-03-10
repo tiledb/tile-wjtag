@@ -9,7 +9,7 @@
     "ku": {
       "sides": {
         "a": {
-          "serial": "210249981365",
+          "serial": "210249B07199",
           "hw_server": "localhost:3121",
           "target": "xilinx_tcf/Digilent/",
           "device": "xcku035",
@@ -18,7 +18,7 @@
           "ltxfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db6v5_top.ltx"
         },
         "b": {
-          "serial": "210249981366",
+          "serial": "210249A1449F",
           "hw_server": "localhost:3121",
           "target": "xilinx_tcf/Digilent/",
           "device": "xcku035",
@@ -66,8 +66,8 @@
     },
     "proasic": {
       "sides": {
-        "a": { "programmer": "0059F4B3" },
-        "b": { "programmer": "0059F8LM" }
+        "a": { "programmer": "0059F8LM" },
+        "b": { "programmer": "0059F4B3" }
       }
     }
   }
