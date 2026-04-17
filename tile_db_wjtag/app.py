@@ -3,6 +3,7 @@ import os
 import subprocess
 import errno
 import socket
+import requests
 
 from lib.hw import *
 from lib.mariadb import *
@@ -213,19 +214,42 @@ def _run_process_ku(process, master_fd):
 
                     # Check DB for this DNA
                     db_info = check_dna_in_db(dna)
-                    # print(f"DB info for DNA {dna}: {db_info}")
+
+                    expected_side = KU_SERIAL_TO_SIDE.get(serial)
+
                     if db_info:
-                        yield {
-                            "source": "ku",
-                            "line": (
-                                f"DNA {dna} is registered in DB for side {db_info['side']}, "
-                                f"Serial: {db_info['serial_no']}, Batch: {db_info['batch_id']}"
-                            ),
-                            "db_status": "registered",
-                            "serial_no": db_info["serial_no"],
-                            "batch_id": db_info["batch_id"],
-                            "side": db_info["side"]
-                        }
+
+                        db_side = db_info["side"]
+
+                        if db_side != expected_side:
+                            # WRONG SIDE ERROR
+                            yield {
+                                "source": "ku",
+                                "line": (
+                                    f"ERROR: DNA {dna} belongs to DB side {db_side} "
+                                    f"but is connected to physical side {expected_side}"
+                                ),
+                                "db_status": "side_mismatch",
+                                "serial_no": db_info["serial_no"],
+                                "batch_id": db_info["batch_id"],
+                                "side": db_side,
+                                "expected_side": expected_side
+                            }
+
+                        else:
+                            # Correct match
+                            yield {
+                                "source": "ku",
+                                "line": (
+                                    f"DNA {dna} correctly registered for side {db_side}, "
+                                    f"Serial: {db_info['serial_no']}, Batch: {db_info['batch_id']}"
+                                ),
+                                "db_status": "registered",
+                                "serial_no": db_info["serial_no"],
+                                "batch_id": db_info["batch_id"],
+                                "side": db_side
+                            }
+
                     else:
                         yield {
                             "source": "ku",
@@ -233,7 +257,6 @@ def _run_process_ku(process, master_fd):
                             "db_status": "unregistered",
                             "dna": dna
                         }
-
                 # --- Check operation result ---
                 result_match = result_pattern.search(line)
                 if result_match:
@@ -436,12 +459,35 @@ def refresh_processes():
     killed = []
     for proc in psutil.process_iter(['pid', 'name']):
         try:
-            if proc.info['name'] in ("vivado_lab", "cs_server"):
+            if proc.info['name'] in ("vivado_lab", "cs_server", "FPExpress_bin"):
                 os.kill(proc.info['pid'], signal.SIGTERM)
                 killed.append(proc.info['name'])
         except Exception as e:
             print(f"Error killing process {proc.info['name']}: {e}")
     return jsonify({"status": "ok", "killed": killed})
+
+
+@app.route("/api/restart_tile_wjtag", methods=["POST"])
+def restart_tile_wjtag():
+    try:
+        response = requests.post(
+            "http://127.0.0.1:8081/action",
+            data={
+                "service": "tile-wjtag",
+                "action": "restart"
+            },
+            timeout=5
+        )
+        response.raise_for_status()
+        service_status = "restarted"
+    except Exception as e:
+        print(f"Error calling service restart: {e}")
+        service_status = f"error: {e}"
+
+    return jsonify({
+        "status": "ok",
+        "service": service_status
+    })
 
 
 @app.route("/api/power_state/<side>", methods=["GET"])

@@ -211,22 +211,129 @@ let activeEventSources = {
 let activeTimers = {}; // keep track of running timers
 
 
+function resetDbBoxes() {
+    ["ku_side_a_serial","ku_side_a_batch","ku_side_b_serial","ku_side_b_batch"].forEach(id=>{
+        const el = document.getElementById(id);
+        if (el) el.innerText = "---";
+    });
+
+    ["db_side_a_box","db_side_b_box"].forEach(id=>{
+        const box = document.getElementById(id);
+        if (box) {
+            box.classList.remove("blink-red","green-text");
+        }
+    });
+}
+
+
+function resetStatusBoxesForKUAction(action) {
+    // Map KU actions to their relevant status box IDs
+    const kuActionBoxes = {
+        "get_ku_properties": ["ku_side_a_dna", "ku_side_b_dna"],
+        "program_ku": ["ku_program_side_a_status", "ku_program_side_b_status", "ku_program_side_a_id", "ku_program_side_b_id"],
+        "program_ku_flash": ["ku_flash_side_a_status", "ku_flash_side_b_status", "ku_flash_side_a_id", "ku_flash_side_b_id"],
+        "verify_ku_flash": ["ku_verify_side_a_status", "ku_verify_side_b_status", "ku_verify_side_a_id", "ku_verify_side_b_id"]
+        
+    };
+
+    // Get all KU status boxes
+    const allKUBoxes = [
+        "ku_side_a_dna", "ku_side_b_dna",
+        "ku_program_side_a_status", "ku_program_side_b_status", "ku_program_side_a_id", "ku_program_side_b_id",
+        "ku_flash_side_a_status", "ku_flash_side_b_status", "ku_flash_side_a_id", "ku_flash_side_b_id",
+        "ku_verify_side_a_status", "ku_verify_side_b_status", "ku_verify_side_a_id", "ku_verify_side_b_id"
+    ];
+    console.log(action);
+
+    // Boxes relevant to clicked action
+    const relevant = kuActionBoxes[action] || [];
+
+    allKUBoxes.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+
+        if (relevant.includes(id)) {
+            el.innerText = "---";                      // reset text
+            el.classList.add("status-active");         // green
+            el.classList.remove("status-inactive");   // remove blue
+        } else {
+            el.classList.remove("status-active");     // remove green
+            el.classList.add("status-inactive");      // light blue
+        }
+    });
+}
+function resetStatusBoxesForProasicAction(action) {
+    // Map actions to their relevant status box IDs
+    const actionBoxes = {
+        "program_proasic": ["program_side_a_status", "program_side_b_status", "program_side_a_id", "program_side_b_id"],
+        "verify_proasic": ["verify_side_a_status", "verify_side_b_status", "verify_side_a_id", "verify_side_b_id"],
+        "get_proasic_info": ["proasic_side_a", "proasic_side_b"]
+        // Add other actions here if needed
+    };
+
+    // Get all status boxes
+    const allBoxes = [
+        "program_side_a_status", "program_side_b_status",
+        "verify_side_a_status", "verify_side_b_status",
+        "proasic_side_a", "proasic_side_b"
+    ];
+    
+    // Boxes relevant to clicked action
+    const relevant = actionBoxes[action] || [];
+
+    allBoxes.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+
+        if (relevant.includes(id)) {
+            el.innerText = "---";                      // reset text
+            el.classList.add("status-active");         // green
+            el.classList.remove("status-inactive");   // remove blue
+        } else {
+            el.classList.remove("status-active");     // remove green
+            el.classList.add("status-inactive");      // light blue
+        }
+    });
+}
+
 function checkLedStatus(type) {
     const sides = ["a", "b"];
     let failed = false;
 
     sides.forEach(side => {
         let statusId;
+
         if (type === "ku_program") statusId = `ku_program_side_${side}_status`;
         else if (type === "ku_flash_program") statusId = `ku_flash_side_${side}_status`;
         else if (type === "ku_verify") statusId = `ku_verify_side_${side}_status`;
-        else return;
+
+        else if (type === "proasic_program") statusId = `program_side_${side}_status`;
+        else if (type === "proasic_verify") statusId = `verify_side_${side}_status`;
+
+        if (!statusId) return;
 
         const span = document.getElementById(statusId);
-        if (span && span.innerText === "FAILED!") failed = true;
+
+        if (span && (
+            span.innerText === "FAILED!" ||
+            span.innerText === "FAILED"
+        )) {
+            failed = true;
+        }
     });
 
     return failed ? "failure" : "success";
+}
+
+function setButtonRunning(buttonId, isRunning) {
+    const btn = document.getElementById(buttonId);
+    if (!btn) return;
+
+    if (isRunning) {
+        btn.classList.add("btn-running");
+    } else {
+        btn.classList.remove("btn-running");
+    }
 }
 
 // ----------------------------
@@ -261,6 +368,15 @@ async function startAction(action, type) {
     await updateDetectedHW();
 
     let group = null;
+
+    if (type.includes("proasic")) {
+        resetStatusBoxesForProasicAction(action); // ✅ resets only relevant boxes
+    }
+
+    if (type.includes("ku")) {
+        resetDbBoxes();
+        resetStatusBoxesForKUAction(action);
+    }
 
     if (action.includes("ku")) {
         group = "ku";
@@ -345,27 +461,57 @@ async function startAction(action, type) {
         }
 
         if (data.source === "ku") {
+
+            // ----------------------
+            // Correct DB match
+            // ----------------------
             if (data.db_status === "registered") {
-                // Update DB info in the UI
-                const side = data.side.toLowerCase(); // 'a' or 'b'
+
+                const side = data.side.toLowerCase();
+
                 document.getElementById(`ku_side_${side}_serial`).innerText = data.serial_no;
                 document.getElementById(`ku_side_${side}_batch`).innerText = data.batch_id;
 
-                // Compare both sides
                 updateDbBoxes();
-            } 
-            // else if (data.db_status === "unregistered") {
-            //     const map = {
-            //         [hwConfig.ku.sides.a.serial]: "a",
-            //         [hwConfig.ku.sides.b.serial]: "b"
-            //     };
-            //     const side = map[sideKey] || sideKey;
-            //     console.log(side);
-            //     document.getElementById(`ku_side_${side}_serial`).innerText = "Not in DBbase";
-            //     document.getElementById(`ku_side_${side}_batch`).innerText = "Not in DBbase";
-            //     updateDbBoxes();
-            // }
+            }
 
+            // ----------------------
+            // Side mismatch error
+            // ----------------------
+            else if (data.db_status === "side_mismatch") {
+
+                const side = data.expected_side.toLowerCase();
+
+                document.getElementById(`ku_side_${side}_serial`).innerText = data.serial_no;
+                document.getElementById(`ku_side_${side}_batch`).innerText = data.batch_id;
+
+                const box = document.getElementById(`db_side_${side}_box`);
+                if (box) {
+                    box.classList.remove("green-text");
+                    box.classList.add("blink-red");
+                }
+            }
+
+            // ----------------------
+            // Not in DB
+            // ----------------------
+            else if (data.db_status === "unregistered") {
+
+                const serialBoxA = document.getElementById("ku_side_a_serial");
+                const serialBoxB = document.getElementById("ku_side_b_serial");
+
+                if (serialBoxA.innerText === "---") {
+                    serialBoxA.innerText = "Not in DB";
+                }
+                if (serialBoxB.innerText === "---") {
+                    serialBoxB.innerText = "Not in DB";
+                }
+
+                ["db_side_a_box","db_side_b_box"].forEach(id=>{
+                    const box = document.getElementById(id);
+                    if (box) box.classList.add("blink-red");
+                });
+            }
         }
 
         // ------------------------
@@ -560,12 +706,13 @@ function parseProgramLine(line) {
         const statusText = result === "PASSED" ? "Programmed" : "FAILED!";
         const className = result === "PASSED" ? "passed" : "failed";
 
-        if (programmer === hwConfig.proasic.sides.a.programmer) {
+        if (programmer.trim().toUpperCase().includes(hwConfig.proasic.sides.a.programmer.trim().toUpperCase())) {
             const span = document.getElementById("program_side_a_status");
             span.innerText = statusText;
             span.className = className;
         }
-        if (programmer === hwConfig.proasic.sides.b.programmer) {
+
+        if (programmer.trim().toUpperCase().includes(hwConfig.proasic.sides.b.programmer.trim().toUpperCase())) {
             const span = document.getElementById("program_side_b_status");
             span.innerText = statusText;
             span.className = className;
@@ -776,14 +923,22 @@ updateSystemUsage(); // initial call
 
 // Refresh processes
 document.getElementById("refresh-processes").addEventListener("click", async () => {
+    // ✅ Confirmation dialog
+    if (!confirm("Are you sure you want to refresh processes? This will kill running processes.")) {
+        return;
+    }
+
     const btn = document.getElementById("refresh-processes");
+
     btn.disabled = true;
     btn.innerText = "Refreshing...";
+
     try {
         const res = await fetch("api/refresh_processes", { method: "POST" });
         const data = await res.json();
-        console.log("Killed processes:", data.killed);
+
         alert("Processes refreshed: " + (data.killed.length ? data.killed.join(", ") : "None"));
+
     } catch (err) {
         console.error(err);
         alert("Failed to refresh processes.");
@@ -791,6 +946,47 @@ document.getElementById("refresh-processes").addEventListener("click", async () 
         btn.disabled = false;
         btn.innerText = "Refresh Processes";
     }
+});
+
+document.getElementById("restart-tile-wjtag").addEventListener("click", () => {
+    // ✅ Confirmation dialog
+    if (!confirm("Are you sure you want to restart the tile-wjtag service?")) {
+        return;
+    }
+
+    const btn = document.getElementById("restart-tile-wjtag");
+
+    btn.disabled = true;
+    btn.innerText = "Restarting...";
+
+    // 🔥 Fire-and-forget (DO NOT await)
+    fetch("api/restart_tile_wjtag", {
+        method: "POST"
+    }).catch(err => {
+        console.log("Expected error during restart:", err);
+    });
+
+    // 💡 Replace UI with reconnect message
+    document.body.innerHTML = `
+        <div style="text-align:center; margin-top:50px;">
+            <h2>Restarting service...</h2>
+            <p>Reconnecting, please wait.</p>
+        </div>
+    `;
+
+    // 🚀 Retry until backend is back
+    function waitForServer() {
+        fetch("/api/get_hostname")
+            .then(() => {
+                location.reload();
+            })
+            .catch(() => {
+                setTimeout(waitForServer, 1000);
+            });
+    }
+
+    // ⏳ Give backend a moment before starting retries
+    setTimeout(waitForServer, 3000);
 });
 
 // Set hostname on load
