@@ -11,7 +11,7 @@
                         "type": "XSDB_V3",
                         "name": "dbg_hub",
                         "spec": "labtools_xsdbm_v3",
-                        "clk_input_freq_hz": "39999996"
+                        "clk_input_freq_hz": "100000000"
                     },
                     {
                         "type": "VIO_V2",
@@ -4166,6 +4166,458 @@
                                 "nets": [
                                     {
                                         "name": "i_db6_clock_interface/s_clknet_out[cis_enable]",
+                                        "isBus": false
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        "type": "VIO_V2",
+                        "name": "i_vio_mb_jtag_debug",
+                        "spec": "labtools_vio_v3",
+                        "ipName": "vio",
+                        "core_location": {
+                            "user_chain": 1,
+                            "slave_index": 1,
+                            "bscan_switch_index": 0
+                        },
+                        "uuid": "DB68688FEDD056269A58CB8AA706EB35",
+                        "pins": [
+                            {
+                                "name": "probe_in0",
+                                "id": 144,
+                                "type": "DATA",
+                                "direction": "IN",
+                                "isVector": false,
+                                "leftIndex": 0,
+                                "rightIndex": 0,
+                                "portIndex": 0,
+                                "nets": [
+                                    {
+                                        "name": "s_mb_jtag_done[q0]",
+                                        "isBus": false
+                                    }
+                                ]
+                            },
+                            {
+                                "name": "probe_in1",
+                                "id": 145,
+                                "type": "DATA",
+                                "direction": "IN",
+                                "isVector": true,
+                                "leftIndex": 0,
+                                "rightIndex": 31,
+                                "portIndex": 1,
+                                "nets": [
+                                    {
+                                        "name": "s_mb_jtag_id[q0]",
+                                        "isBus": true,
+                                        "subnets": [
+                                            {
+                                                "name": "s_mb_jtag_id[q0][31]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q0][30]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q0][29]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q0][28]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q0][27]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q0][26]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q0][25]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q0][24]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q0][23]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q0][22]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q0][21]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q0][20]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q0][19]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q0][18]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q0][17]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q0][16]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q0][15]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q0][14]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q0][13]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q0][12]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q0][11]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q0][10]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q0][9]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q0][8]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q0][7]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q0][6]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q0][5]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q0][4]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q0][3]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q0][2]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q0][1]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q0][0]"
+                                            }
+                                        ]
+                                    }
+                                ]
+                            },
+                            {
+                                "name": "probe_in2",
+                                "id": 146,
+                                "type": "DATA",
+                                "direction": "IN",
+                                "isVector": false,
+                                "leftIndex": 0,
+                                "rightIndex": 0,
+                                "portIndex": 2,
+                                "nets": [
+                                    {
+                                        "name": "s_mb_jtag_done[q1]",
+                                        "isBus": false
+                                    }
+                                ]
+                            },
+                            {
+                                "name": "probe_in3",
+                                "id": 147,
+                                "type": "DATA",
+                                "direction": "IN",
+                                "isVector": true,
+                                "leftIndex": 0,
+                                "rightIndex": 31,
+                                "portIndex": 3,
+                                "nets": [
+                                    {
+                                        "name": "s_mb_jtag_id[q1]",
+                                        "isBus": true,
+                                        "subnets": [
+                                            {
+                                                "name": "s_mb_jtag_id[q1][31]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q1][30]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q1][29]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q1][28]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q1][27]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q1][26]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q1][25]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q1][24]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q1][23]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q1][22]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q1][21]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q1][20]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q1][19]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q1][18]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q1][17]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q1][16]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q1][15]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q1][14]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q1][13]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q1][12]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q1][11]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q1][10]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q1][9]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q1][8]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q1][7]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q1][6]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q1][5]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q1][4]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q1][3]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q1][2]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q1][1]"
+                                            },
+                                            {
+                                                "name": "s_mb_jtag_id[q1][0]"
+                                            }
+                                        ]
+                                    }
+                                ]
+                            },
+                            {
+                                "name": "probe_in4",
+                                "id": 148,
+                                "type": "DATA",
+                                "direction": "IN",
+                                "isVector": false,
+                                "leftIndex": 0,
+                                "rightIndex": 0,
+                                "portIndex": 4,
+                                "nets": [
+                                    {
+                                        "name": "s_proasic_jtag_done",
+                                        "isBus": false
+                                    }
+                                ]
+                            },
+                            {
+                                "name": "probe_in5",
+                                "id": 149,
+                                "type": "DATA",
+                                "direction": "IN",
+                                "isVector": true,
+                                "leftIndex": 0,
+                                "rightIndex": 31,
+                                "portIndex": 5,
+                                "nets": [
+                                    {
+                                        "name": "s_proasic_jtag_id",
+                                        "isBus": true,
+                                        "subnets": [
+                                            {
+                                                "name": "s_proasic_jtag_id[31]"
+                                            },
+                                            {
+                                                "name": "s_proasic_jtag_id[30]"
+                                            },
+                                            {
+                                                "name": "s_proasic_jtag_id[29]"
+                                            },
+                                            {
+                                                "name": "s_proasic_jtag_id[28]"
+                                            },
+                                            {
+                                                "name": "s_proasic_jtag_id[27]"
+                                            },
+                                            {
+                                                "name": "s_proasic_jtag_id[26]"
+                                            },
+                                            {
+                                                "name": "s_proasic_jtag_id[25]"
+                                            },
+                                            {
+                                                "name": "s_proasic_jtag_id[24]"
+                                            },
+                                            {
+                                                "name": "s_proasic_jtag_id[23]"
+                                            },
+                                            {
+                                                "name": "s_proasic_jtag_id[22]"
+                                            },
+                                            {
+                                                "name": "s_proasic_jtag_id[21]"
+                                            },
+                                            {
+                                                "name": "s_proasic_jtag_id[20]"
+                                            },
+                                            {
+                                                "name": "s_proasic_jtag_id[19]"
+                                            },
+                                            {
+                                                "name": "s_proasic_jtag_id[18]"
+                                            },
+                                            {
+                                                "name": "s_proasic_jtag_id[17]"
+                                            },
+                                            {
+                                                "name": "s_proasic_jtag_id[16]"
+                                            },
+                                            {
+                                                "name": "s_proasic_jtag_id[15]"
+                                            },
+                                            {
+                                                "name": "s_proasic_jtag_id[14]"
+                                            },
+                                            {
+                                                "name": "s_proasic_jtag_id[13]"
+                                            },
+                                            {
+                                                "name": "s_proasic_jtag_id[12]"
+                                            },
+                                            {
+                                                "name": "s_proasic_jtag_id[11]"
+                                            },
+                                            {
+                                                "name": "s_proasic_jtag_id[10]"
+                                            },
+                                            {
+                                                "name": "s_proasic_jtag_id[9]"
+                                            },
+                                            {
+                                                "name": "s_proasic_jtag_id[8]"
+                                            },
+                                            {
+                                                "name": "s_proasic_jtag_id[7]"
+                                            },
+                                            {
+                                                "name": "s_proasic_jtag_id[6]"
+                                            },
+                                            {
+                                                "name": "s_proasic_jtag_id[5]"
+                                            },
+                                            {
+                                                "name": "s_proasic_jtag_id[4]"
+                                            },
+                                            {
+                                                "name": "s_proasic_jtag_id[3]"
+                                            },
+                                            {
+                                                "name": "s_proasic_jtag_id[2]"
+                                            },
+                                            {
+                                                "name": "s_proasic_jtag_id[1]"
+                                            },
+                                            {
+                                                "name": "s_proasic_jtag_id[0]"
+                                            }
+                                        ]
+                                    }
+                                ]
+                            },
+                            {
+                                "name": "probe_out0",
+                                "id": 150,
+                                "type": "DATA",
+                                "direction": "OUT",
+                                "isVector": false,
+                                "leftIndex": 0,
+                                "rightIndex": 0,
+                                "portIndex": 0,
+                                "nets": [
+                                    {
+                                        "name": "s_mb_jtag_start[q0]",
+                                        "isBus": false
+                                    }
+                                ]
+                            },
+                            {
+                                "name": "probe_out1",
+                                "id": 151,
+                                "type": "DATA",
+                                "direction": "OUT",
+                                "isVector": false,
+                                "leftIndex": 0,
+                                "rightIndex": 0,
+                                "portIndex": 1,
+                                "nets": [
+                                    {
+                                        "name": "s_mb_jtag_start[q1]",
+                                        "isBus": false
+                                    }
+                                ]
+                            },
+                            {
+                                "name": "probe_out2",
+                                "id": 152,
+                                "type": "DATA",
+                                "direction": "OUT",
+                                "isVector": false,
+                                "leftIndex": 0,
+                                "rightIndex": 0,
+                                "portIndex": 2,
+                                "nets": [
+                                    {
+                                        "name": "s_proasic_jtag_start",
                                         "isBus": false
                                     }
                                 ]

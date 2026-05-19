@@ -30,6 +30,22 @@
             S20059F8LM
         </id>
     </programmer>
+    <programmer status="enable" type="FlashPro5" revision="UndefRev" connection="usb2.0">
+        <name>
+            S207712
+        </name>
+        <id>
+            S207712
+        </id>
+    </programmer>
+    <programmer status="enable" type="FlashPro5" revision="UndefRev" connection="usb2.0">
+        <name>
+            S207573
+        </name>
+        <id>
+            S207573
+        </id>
+    </programmer>
     <configuration>
         <Hardware>
             <FlashPro>
