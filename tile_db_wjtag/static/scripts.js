@@ -4,27 +4,24 @@ let hwDetected = null;    // Detected hardware (Digilent + FlashPro)
 
 async function loadHwConfig() {
     try {
-        // -------------------------------
-        // Load hwConfig from server
-        // -------------------------------
-        const configResponse = await fetch("api/hw_config");
-        hwConfig = await configResponse.json();
-        console.log("Loaded HW config:", hwConfig);
+        const [configResponse, detectedResponse, hostnameResponse] = await Promise.all([
+            fetch("api/hw_config"),
+            fetch("api/detect_programmers"),
+            fetch("api/get_hostname"),
+        ]);
 
-        // -------------------------------
-        // Load detected hardware
-        // -------------------------------
-        const detectedResponse = await fetch("api/detect_programmers");
+        hwConfig = await configResponse.json();
         hwDetected = await detectedResponse.json();
+        const hostnameData = await hostnameResponse.json();
+
+        document.getElementById("hostname-value").textContent = hostnameData.hostname;
+        console.log("Loaded HW config:", hwConfig);
         console.log("Detected hardware from server:", hwDetected);
 
-        // -------------------------------
-        // Now initialize the UI
-        // -------------------------------
         initializeUI();
-
     } catch (error) {
         console.error("Failed to load hardware or detected devices:", error);
+        document.getElementById("hostname-value").textContent = "Unknown";
     }
 }
 
@@ -197,7 +194,13 @@ function initializeUI() {
 
 
 
-document.addEventListener("DOMContentLoaded", loadHwConfig);
+document.addEventListener("DOMContentLoaded", () => {
+    initDaughterboardGrid();
+    resetDaughterboardSection();
+    loadComponentLots();
+    loadHwConfig();
+    initEditIdleTracking();
+});
 
 
 // ----------------------------
@@ -223,6 +226,1162 @@ function resetDbBoxes() {
             box.classList.remove("blink-red","green-text");
         }
     });
+
+    resetDaughterboardSection();
+}
+
+const DAUGHTERBOARD_PLACEHOLDER = "xxx";
+let currentDaughterboardSerial = null;
+let currentDaughterboardData = null;
+let registrationMode = false;
+let globalEditUnlocked = false;
+const EDIT_IDLE_TIMEOUT_SEC = 60;
+let editIdleSecondsRemaining = EDIT_IDLE_TIMEOUT_SEC;
+let editIdleInterval = null;
+let editIdleListenersAttached = false;
+let componentLotsByType = {};
+const groupEditUnlocked = {
+    info: false,
+    burnin: false,
+    lots: false,
+    sfp: false,
+};
+
+const DAUGHTERBOARD_GROUPS = [
+    {
+        id: "info",
+        title: "Info",
+        fields: [
+            { key: "serial_no", label: "Serial Number", registerEditable: true },
+            { key: "kintex_a_readout", label: "Kintex A DNA", readoutId: "ku_side_a_dna" },
+            { key: "kintex_b_readout", label: "Kintex B DNA", readoutId: "ku_side_b_dna" },
+            { key: "db_status", label: "DB Status", editable: true, inputType: "number" },
+            { key: "e_test", label: "E-Test", type: "checkbox", editable: true },
+            { key: "p_test", label: "P-Test", type: "checkbox", editable: true },
+        ],
+    },
+    {
+        id: "burnin",
+        title: "Burn-in",
+        fields: [
+            { key: "burn_in_start", label: "Burn In Start", editable: true, type: "datetime" },
+            { key: "burn_in_stop", label: "Burn In Stop", editable: true, type: "datetime" },
+            { key: "burn_in_op", label: "Burn In Operator", editable: true },
+        ],
+    },
+    {
+        id: "lots",
+        title: "LOTs",
+        layout: "grid",
+        fields: [
+            { key: "kin_lot", label: "Kintex Lot", editable: true, type: "lot", componentType: "KIN" },
+            { key: "pro_lot", label: "ProASIC Lot", editable: true, type: "lot", componentType: "PRO" },
+            { key: "gbt_lot", label: "GBT Lot", editable: true, type: "lot", componentType: "GBT" },
+            { key: "ina_lot", label: "INA Lot", editable: true, type: "lot", componentType: "INA" },
+            { key: "ltm_lot", label: "LTM Lot", editable: true, type: "lot", componentType: "LTM" },
+            { key: "mos_lot", label: "MOS Lot", editable: true, type: "lot", componentType: "MOS" },
+            { key: "op4_lot", label: "OP4 Lot", editable: true, type: "lot", componentType: "OP4" },
+            { key: "ok4_lot", label: "OK4 Lot", editable: true, type: "lot", componentType: "OK4" },
+            { key: "ok1_lot", label: "OK1 Lot", editable: true, type: "lot", componentType: "OK1" },
+            { key: "mem_lot", label: "MEM Lot", editable: true, type: "lot", componentType: "MEM" },
+            { key: "sfp_lot", label: "SFP Lot", editable: true, type: "lot", componentType: "SFP" },
+        ],
+    },
+    {
+        id: "sfp",
+        title: "SFP+ IDs",
+        fields: [
+            { key: "a0", label: "A0", editable: true },
+            { key: "a1", label: "A1", editable: true },
+            { key: "b0", label: "B0", editable: true },
+            { key: "b1", label: "B1", editable: true },
+        ],
+    },
+];
+
+const DB_DATETIME_FIELDS = new Set(["burn_in_start", "burn_in_stop"]);
+
+function decodeSerialNo(serialNo) {
+    if (serialNo === null || serialNo === undefined || serialNo === "") {
+        return null;
+    }
+
+    const text = String(serialNo).trim();
+    if (!text || text === "---" || text.toLowerCase() === "xxx") {
+        return null;
+    }
+
+    const padded = text.replace(/\D/g, "").padStart(7, "0");
+    if (padded.length !== 7) {
+        return null;
+    }
+
+    return {
+        serial_no: Number(padded),
+        tag: padded.slice(0, 2),
+        batch_no: padded.slice(2, 4),
+        db_no: padded.slice(4, 7),
+    };
+}
+
+function formatBatchNoFromSerial(serialNo) {
+    const decoded = decodeSerialNo(serialNo);
+    return decoded ? decoded.batch_no : DAUGHTERBOARD_PLACEHOLDER;
+}
+
+function updateDaughterboardSerialSummary(serialNo) {
+    const decoded = decodeSerialNo(serialNo);
+    const serialEl = document.getElementById("db_summary_serial");
+    const tagEl = document.getElementById("db_summary_tag");
+    const batchEl = document.getElementById("db_summary_batch_no");
+    const dbNoEl = document.getElementById("db_summary_db_no");
+
+    if (serialEl) {
+        serialEl.textContent = decoded
+            ? String(decoded.serial_no)
+            : formatDaughterboardValue("serial_no", serialNo);
+    }
+    if (tagEl) tagEl.textContent = decoded ? decoded.tag : DAUGHTERBOARD_PLACEHOLDER;
+    if (batchEl) batchEl.textContent = decoded ? decoded.batch_no : DAUGHTERBOARD_PLACEHOLDER;
+    if (dbNoEl) dbNoEl.textContent = decoded ? decoded.db_no : DAUGHTERBOARD_PLACEHOLDER;
+}
+
+function updateRegistrationUI() {
+    const registerBtn = document.getElementById("db-register-btn");
+    if (registerBtn) {
+        registerBtn.hidden = !registrationMode;
+        registerBtn.disabled = !registrationMode;
+    }
+}
+
+function exitRegistrationMode() {
+    registrationMode = false;
+    updateRegistrationUI();
+}
+
+function enterRegistrationMode() {
+    registrationMode = true;
+    currentDaughterboardSerial = null;
+    currentDaughterboardData = null;
+    globalEditUnlocked = true;
+    groupEditUnlocked.info = true;
+
+    setDaughterboardPlaceholderValues({ preserveRegistration: true });
+    setDaughterboardSectionState(
+        "warning",
+        "Registration mode: enter Serial Number, then click Register DB."
+    );
+    updateDaughterboardSerialSummary(null);
+    updateRegistrationUI();
+    updateEditModeUI();
+}
+
+function collectRegistrationFieldValues() {
+    const values = {};
+    DAUGHTERBOARD_GROUPS.forEach(group => {
+        group.fields.forEach(field => {
+            if (!field.editable && !field.registerEditable) {
+                return;
+            }
+
+            if (field.type === "checkbox") {
+                const checkbox = document.getElementById(`db_checkbox_${field.key}`);
+                if (checkbox) {
+                    values[field.key] = checkbox.checked ? 1 : 0;
+                }
+                return;
+            }
+
+            if (field.type === "lot") {
+                const select = document.getElementById(`db_select_${field.key}`);
+                if (select) {
+                    values[field.key] = select.value.trim();
+                }
+                return;
+            }
+
+            if (field.type === "datetime") {
+                const input = document.getElementById(`db_input_${field.key}`);
+                if (input) {
+                    values[field.key] = inputValueToDatetime(input.value);
+                }
+                return;
+            }
+
+            const input = document.getElementById(`db_input_${field.key}`);
+            if (input) {
+                values[field.key] = input.value.trim();
+            }
+        });
+    });
+    return values;
+}
+
+async function registerDaughterboard() {
+    const serialInput = document.getElementById("db_input_serial_no");
+    const serialRaw = serialInput?.value?.trim();
+    if (!serialRaw) {
+        alert("Serial Number is required to register this daughterboard.");
+        serialInput?.focus();
+        return;
+    }
+
+    const decoded = decodeSerialNo(serialRaw);
+    if (!decoded) {
+        alert("Enter a valid 7-digit daughterboard serial number (TTBBDDD).");
+        serialInput?.focus();
+        return;
+    }
+
+    const dnaA = document.getElementById("ku_side_a_dna")?.innerText?.trim();
+    const dnaB = document.getElementById("ku_side_b_dna")?.innerText?.trim();
+    if (!dnaA || dnaA === "---" || !dnaB || dnaB === "---") {
+        alert("Both side A and side B KU DNAs are required before registering.");
+        return;
+    }
+
+    const registerBtn = document.getElementById("db-register-btn");
+    if (registerBtn) {
+        registerBtn.disabled = true;
+        registerBtn.textContent = "Registering...";
+    }
+
+    const fieldValues = collectRegistrationFieldValues();
+    delete fieldValues.serial_no;
+
+    try {
+        const res = await fetch("api/daughterboard/register", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                serial_no: decoded.serial_no,
+                dna_a: dnaA,
+                dna_b: dnaB,
+                fields: fieldValues,
+            }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            throw new Error(data.error || "registration failed");
+        }
+
+        exitRegistrationMode();
+        if (data.daughterboard) {
+            renderDaughterboardData(data.daughterboard);
+        }
+    } catch (err) {
+        console.error("Failed to register daughterboard:", err);
+        alert(`Failed to register daughterboard: ${err.message}`);
+    } finally {
+        if (registerBtn) {
+            registerBtn.disabled = false;
+            registerBtn.textContent = "Register DB";
+        }
+    }
+}
+
+function formatDatetimeDisplay(value) {
+    if (value === null || value === undefined || value === "") {
+        return DAUGHTERBOARD_PLACEHOLDER;
+    }
+
+    const text = String(value).trim().replace("T", " ");
+    if (text.toLowerCase() === "xxx") {
+        return DAUGHTERBOARD_PLACEHOLDER;
+    }
+
+    const match = text.match(/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})(?::(\d{2}))?/);
+    if (!match) {
+        return text;
+    }
+
+    const seconds = match[3] !== undefined ? match[3] : "00";
+    return `${match[1]} ${match[2]}:${seconds}`;
+}
+
+function datetimeToInputValue(value) {
+    const display = formatDatetimeDisplay(value);
+    if (display === DAUGHTERBOARD_PLACEHOLDER) {
+        return "";
+    }
+    return display.replace(" ", "T");
+}
+
+function inputValueToDatetime(value) {
+    if (!value || !value.trim()) {
+        return null;
+    }
+
+    const text = value.trim().replace("T", " ");
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(text)) {
+        return `${text}:00`;
+    }
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(text)) {
+        return text;
+    }
+    return text;
+}
+
+function getDaughterboardGroup(groupId) {
+    return DAUGHTERBOARD_GROUPS.find(group => group.id === groupId);
+}
+
+async function loadComponentLots() {
+    try {
+        const res = await fetch("api/component_lots");
+        if (!res.ok) {
+            throw new Error("failed to load component lots");
+        }
+        componentLotsByType = await res.json();
+        refreshAllLotSelects();
+    } catch (err) {
+        console.error("Failed to load component lots:", err);
+    }
+}
+
+function populateLotSelect(fieldKey, componentType, selectedValue) {
+    const select = document.getElementById(`db_select_${fieldKey}`);
+    if (!select) {
+        return;
+    }
+
+    const lots = componentLotsByType[componentType] || [];
+    const normalized = formatDaughterboardValue(fieldKey, selectedValue);
+    const value = normalized === DAUGHTERBOARD_PLACEHOLDER ? "" : normalized;
+
+    select.innerHTML = "";
+
+    const placeholder = document.createElement("option");
+    placeholder.value = DAUGHTERBOARD_PLACEHOLDER;
+    placeholder.textContent = DAUGHTERBOARD_PLACEHOLDER;
+    select.appendChild(placeholder);
+
+    lots.forEach(lot => {
+        const option = document.createElement("option");
+        option.value = lot;
+        option.textContent = lot;
+        select.appendChild(option);
+    });
+
+    if (value && !lots.includes(value)) {
+        const custom = document.createElement("option");
+        custom.value = value;
+        custom.textContent = value;
+        select.appendChild(custom);
+    }
+
+    select.value = value || DAUGHTERBOARD_PLACEHOLDER;
+}
+
+function refreshAllLotSelects() {
+    DAUGHTERBOARD_GROUPS.forEach(group => {
+        group.fields.forEach(field => {
+            if (field.type !== "lot") {
+                return;
+            }
+            const select = document.getElementById(`db_select_${field.key}`);
+            const currentValue = select ? select.value : DAUGHTERBOARD_PLACEHOLDER;
+            populateLotSelect(field.key, field.componentType, currentValue);
+        });
+    });
+}
+
+function isGroupEditable(groupId) {
+    return globalEditUnlocked && groupEditUnlocked[groupId] === true;
+}
+
+function isFieldEditable(groupId, field) {
+    if (registrationMode && field.registerEditable && groupId === "info") {
+        return isGroupEditable(groupId);
+    }
+    return Boolean(field.editable) && isGroupEditable(groupId);
+}
+
+function isEditIdleTrackingActive() {
+    return globalEditUnlocked || registrationMode;
+}
+
+function updateEditIdleCountdownUI() {
+    const el = document.getElementById("db-edit-idle-countdown");
+    if (!el) {
+        return;
+    }
+
+    if (!isEditIdleTrackingActive()) {
+        el.hidden = true;
+        el.textContent = "";
+        el.classList.remove("is-warning");
+        return;
+    }
+
+    el.hidden = false;
+    el.textContent = `Auto-lock: ${editIdleSecondsRemaining}s`;
+    el.classList.toggle("is-warning", editIdleSecondsRemaining <= 10);
+}
+
+function resetEditIdleCountdown() {
+    editIdleSecondsRemaining = EDIT_IDLE_TIMEOUT_SEC;
+    updateEditIdleCountdownUI();
+}
+
+function stopEditIdleTimer() {
+    if (editIdleInterval !== null) {
+        clearInterval(editIdleInterval);
+        editIdleInterval = null;
+    }
+    updateEditIdleCountdownUI();
+}
+
+function tickEditIdleTimer() {
+    editIdleSecondsRemaining -= 1;
+    updateEditIdleCountdownUI();
+
+    if (editIdleSecondsRemaining <= 0) {
+        stopEditIdleTimer();
+        lockAllEditModes(true);
+    }
+}
+
+function startEditIdleTimer() {
+    stopEditIdleTimer();
+    if (!isEditIdleTrackingActive()) {
+        return;
+    }
+
+    resetEditIdleCountdown();
+    editIdleInterval = setInterval(tickEditIdleTimer, 1000);
+}
+
+function syncEditIdleTimer() {
+    if (isEditIdleTrackingActive()) {
+        if (editIdleInterval === null) {
+            startEditIdleTimer();
+        } else {
+            updateEditIdleCountdownUI();
+        }
+        return;
+    }
+
+    stopEditIdleTimer();
+}
+
+function onEditIdleActivity() {
+    if (!isEditIdleTrackingActive()) {
+        return;
+    }
+    resetEditIdleCountdown();
+}
+
+function initEditIdleTracking() {
+    if (editIdleListenersAttached) {
+        return;
+    }
+
+    ["mousedown", "keydown", "click", "touchstart", "input", "change", "scroll"].forEach(eventName => {
+        document.addEventListener(eventName, onEditIdleActivity, { passive: true });
+    });
+    editIdleListenersAttached = true;
+}
+
+function lockAllEditModes(reloadFromData = true) {
+    exitRegistrationMode();
+    globalEditUnlocked = false;
+    Object.keys(groupEditUnlocked).forEach(groupId => {
+        groupEditUnlocked[groupId] = false;
+    });
+
+    if (reloadFromData && currentDaughterboardData) {
+        applyDaughterboardValues(currentDaughterboardData);
+    }
+
+    updateEditModeUI();
+}
+
+function updateEditModeUI() {
+    const globalBtn = document.getElementById("db-global-edit-btn");
+    if (globalBtn) {
+        globalBtn.textContent = globalEditUnlocked ? "Global: Unlocked" : "Global: Locked";
+        globalBtn.classList.toggle("unlocked", globalEditUnlocked);
+        globalBtn.classList.toggle("locked", !globalEditUnlocked);
+        globalBtn.disabled = !currentDaughterboardSerial && !registrationMode;
+    }
+
+    DAUGHTERBOARD_GROUPS.forEach(group => {
+        const groupBtn = document.getElementById(`db-group-edit-${group.id}`);
+        const saveBtn = document.getElementById(`db-group-save-${group.id}`);
+        const panel = document.getElementById(`db-panel-${group.id}`);
+        const groupIsEditable = isGroupEditable(group.id);
+        const canEditGroups = Boolean(currentDaughterboardSerial) || registrationMode;
+
+        if (groupBtn) {
+            groupBtn.textContent = groupIsEditable ? "Edit: On" : "Edit: Locked";
+            groupBtn.classList.toggle("unlocked", groupIsEditable);
+            groupBtn.classList.toggle("locked", !groupIsEditable);
+            groupBtn.disabled = !globalEditUnlocked || !canEditGroups;
+        }
+
+        if (saveBtn) {
+            saveBtn.hidden = !groupIsEditable || registrationMode;
+        }
+
+        if (panel) {
+            panel.classList.toggle("db-panel-editing", groupIsEditable);
+        }
+
+        group.fields.forEach(field => {
+            if (field.readoutId) {
+                return;
+            }
+
+            if (field.type === "checkbox") {
+                const checkbox = document.getElementById(`db_checkbox_${field.key}`);
+                if (checkbox) {
+                    checkbox.disabled = ((!currentDaughterboardSerial && !registrationMode) || !isFieldEditable(group.id, field));
+                }
+                return;
+            }
+
+            if (field.type === "lot") {
+                const select = document.getElementById(`db_select_${field.key}`);
+                if (!select) {
+                    return;
+                }
+                const editable = isFieldEditable(group.id, field);
+                select.disabled = ((!currentDaughterboardSerial && !registrationMode) || !editable);
+                select.classList.toggle("is-editing", editable);
+                return;
+            }
+
+            if (field.type === "datetime") {
+                const editable = isFieldEditable(group.id, field);
+                const display = document.getElementById(`db_field_${field.key}`);
+                const input = document.getElementById(`db_input_${field.key}`);
+                if (display) {
+                    display.hidden = editable;
+                }
+                if (input) {
+                    input.hidden = !editable;
+                    input.disabled = (!currentDaughterboardSerial && !registrationMode) || !editable;
+                    input.classList.toggle("is-editing", editable);
+                }
+                return;
+            }
+
+            if (field.registerEditable) {
+                const editable = isFieldEditable(group.id, field);
+                const display = document.getElementById(`db_field_${field.key}`);
+                const input = document.getElementById(`db_input_${field.key}`);
+                if (display) {
+                    display.hidden = editable;
+                }
+                if (input) {
+                    input.hidden = !editable;
+                    input.readOnly = !editable;
+                    input.disabled = !registrationMode || !editable;
+                    input.classList.toggle("is-editing", editable);
+                }
+                return;
+            }
+
+            if (!field.editable) {
+                return;
+            }
+
+            const input = document.getElementById(`db_input_${field.key}`);
+            if (!input) {
+                return;
+            }
+
+            const editable = isFieldEditable(group.id, field);
+            input.readOnly = !editable;
+            input.disabled = !currentDaughterboardSerial && !registrationMode;
+            input.classList.toggle("is-editing", editable);
+        });
+    });
+
+    updateRegistrationUI();
+    syncEditIdleTimer();
+}
+
+function initDaughterboardEditControls() {
+    const globalBtn = document.getElementById("db-global-edit-btn");
+    if (globalBtn && !globalBtn.dataset.wired) {
+        globalBtn.addEventListener("click", () => {
+            if (!currentDaughterboardSerial && !registrationMode) {
+                return;
+            }
+
+            if (!globalEditUnlocked) {
+                const confirmed = confirm(
+                    "Warning: unlock global edit mode?\n\n" +
+                    "Group edit toggles will be enabled. Database changes still require group edit + Save."
+                );
+                if (!confirmed) {
+                    return;
+                }
+                globalEditUnlocked = true;
+            } else {
+                lockAllEditModes(true);
+                return;
+            }
+
+            updateEditModeUI();
+        });
+        globalBtn.dataset.wired = "true";
+    }
+
+    const registerBtn = document.getElementById("db-register-btn");
+    if (registerBtn && !registerBtn.dataset.wired) {
+        registerBtn.addEventListener("click", registerDaughterboard);
+        registerBtn.dataset.wired = "true";
+    }
+
+    const serialInput = document.getElementById("db_input_serial_no");
+    if (serialInput && !serialInput.dataset.wiredSummary) {
+        serialInput.addEventListener("input", () => {
+            if (!registrationMode) {
+                return;
+            }
+            const decoded = decodeSerialNo(serialInput.value);
+            updateDaughterboardSerialSummary(decoded ? decoded.serial_no : null);
+        });
+        serialInput.dataset.wiredSummary = "true";
+    }
+}
+
+function toggleGroupEditMode(groupId) {
+    if (!globalEditUnlocked || (!currentDaughterboardSerial && !registrationMode)) {
+        return;
+    }
+
+    const group = getDaughterboardGroup(groupId);
+    if (!group) {
+        return;
+    }
+
+    if (!groupEditUnlocked[groupId]) {
+        groupEditUnlocked[groupId] = true;
+    } else {
+        groupEditUnlocked[groupId] = false;
+        if (currentDaughterboardData) {
+            applyDaughterboardValues(currentDaughterboardData);
+        }
+    }
+
+    updateEditModeUI();
+}
+
+function collectGroupFieldValues(groupId) {
+    const group = getDaughterboardGroup(groupId);
+    if (!group) {
+        return {};
+    }
+
+    const values = {};
+    group.fields.forEach(field => {
+        if (!field.editable) {
+            return;
+        }
+
+        if (field.type === "checkbox") {
+            const checkbox = document.getElementById(`db_checkbox_${field.key}`);
+            if (checkbox) {
+                values[field.key] = checkbox.checked ? 1 : 0;
+            }
+            return;
+        }
+
+        if (field.type === "lot") {
+            const select = document.getElementById(`db_select_${field.key}`);
+            if (select) {
+                values[field.key] = select.value.trim();
+            }
+            return;
+        }
+
+        if (field.type === "datetime") {
+            const input = document.getElementById(`db_input_${field.key}`);
+            if (input) {
+                values[field.key] = inputValueToDatetime(input.value);
+            }
+            return;
+        }
+
+        const input = document.getElementById(`db_input_${field.key}`);
+        if (input) {
+            values[field.key] = input.value.trim();
+        }
+    });
+
+    return values;
+}
+
+async function saveGroupEdits(groupId) {
+    if (!isGroupEditable(groupId) || !currentDaughterboardSerial) {
+        return;
+    }
+
+    const group = getDaughterboardGroup(groupId);
+    const fields = collectGroupFieldValues(groupId);
+
+    const saveBtn = document.getElementById(`db-group-save-${groupId}`);
+    if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.textContent = "Saving...";
+    }
+
+    try {
+        const res = await fetch(`api/daughterboard/${currentDaughterboardSerial}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ fields }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            throw new Error(data.error || "update failed");
+        }
+
+        if (data.daughterboard) {
+            currentDaughterboardData = data.daughterboard;
+            renderDaughterboardData(data.daughterboard, { preserveEditModes: true });
+        }
+
+        groupEditUnlocked[groupId] = false;
+        updateEditModeUI();
+    } catch (err) {
+        console.error("Failed to save daughterboard group:", err);
+        alert(`Failed to save ${group.title}: ${err.message}`);
+    } finally {
+        if (saveBtn) {
+            saveBtn.disabled = false;
+            saveBtn.textContent = "Save";
+        }
+    }
+}
+
+function getReadoutDna(readoutId) {
+    const text = document.getElementById(readoutId)?.innerText?.trim();
+    if (!text || text === "---") {
+        return DAUGHTERBOARD_PLACEHOLDER;
+    }
+    return text;
+}
+
+function initDaughterboardGrid() {
+    const panels = document.getElementById("daughterboard-data-panels");
+    if (!panels || panels.dataset.initialized === "true") {
+        return;
+    }
+
+    panels.innerHTML = "";
+
+    DAUGHTERBOARD_GROUPS.forEach(group => {
+        const panel = document.createElement("div");
+        panel.className = "db-panel";
+        panel.id = `db-panel-${group.id}`;
+
+        const header = document.createElement("div");
+        header.className = "db-panel-header";
+        header.innerHTML = `
+            <h3>${group.title}</h3>
+            <div class="db-panel-actions">
+                <button type="button" class="db-edit-btn locked" id="db-group-edit-${group.id}" disabled>
+                    Edit: Locked
+                </button>
+                <button type="button" class="db-save-btn" id="db-group-save-${group.id}" hidden>
+                    Save
+                </button>
+            </div>
+        `;
+        panel.appendChild(header);
+
+        const editBtn = header.querySelector(`#db-group-edit-${group.id}`);
+        editBtn.addEventListener("click", () => toggleGroupEditMode(group.id));
+
+        const saveBtn = header.querySelector(`#db-group-save-${group.id}`);
+        saveBtn.addEventListener("click", () => saveGroupEdits(group.id));
+
+        const fieldsWrap = document.createElement("div");
+        fieldsWrap.className = "db-panel-fields";
+        if (group.layout === "grid") {
+            fieldsWrap.classList.add("lots-grid");
+        }
+
+        group.fields.forEach(field => {
+            const fieldEl = document.createElement("div");
+            fieldEl.className = "daughterboard-field";
+
+            if (field.type === "checkbox") {
+                fieldEl.innerHTML = `
+                    <span class="daughterboard-field-line checkbox-field">
+                        <span class="daughterboard-field-label">${field.label}:</span>
+                        <input
+                            type="checkbox"
+                            class="db-test-checkbox"
+                            id="db_checkbox_${field.key}"
+                            data-field="${field.key}"
+                            disabled
+                        >
+                    </span>
+                `;
+            } else if (field.type === "lot") {
+                fieldEl.innerHTML = `
+                    <span class="daughterboard-field-line">
+                        <span class="daughterboard-field-label">${field.label}:</span>
+                        <select
+                            class="db-field-select"
+                            id="db_select_${field.key}"
+                            data-field="${field.key}"
+                            data-group="${group.id}"
+                            disabled
+                        ></select>
+                    </span>
+                `;
+                populateLotSelect(field.key, field.componentType, DAUGHTERBOARD_PLACEHOLDER);
+            } else if (field.type === "datetime") {
+                fieldEl.innerHTML = `
+                    <span class="daughterboard-field-line daughterboard-datetime-field">
+                        <span class="daughterboard-field-label">${field.label}:</span>
+                        <span class="daughterboard-field-value db-datetime-display" id="db_field_${field.key}">${DAUGHTERBOARD_PLACEHOLDER}</span>
+                        <input
+                            type="datetime-local"
+                            step="1"
+                            class="db-field-input db-datetime-input"
+                            id="db_input_${field.key}"
+                            data-field="${field.key}"
+                            data-group="${group.id}"
+                            hidden
+                            disabled
+                        >
+                    </span>
+                `;
+            } else if (field.registerEditable) {
+                fieldEl.innerHTML = `
+                    <span class="daughterboard-field-line">
+                        <span class="daughterboard-field-label">${field.label}:</span>
+                        <span class="daughterboard-field-value" id="db_field_${field.key}">${DAUGHTERBOARD_PLACEHOLDER}</span>
+                        <input
+                            type="number"
+                            class="db-field-input"
+                            id="db_input_${field.key}"
+                            data-field="${field.key}"
+                            data-group="${group.id}"
+                            hidden
+                            disabled
+                        >
+                    </span>
+                `;
+            } else if (field.editable) {
+                const inputType = field.inputType || "text";
+                fieldEl.innerHTML = `
+                    <span class="daughterboard-field-line">
+                        <span class="daughterboard-field-label">${field.label}:</span>
+                        <input
+                            type="${inputType}"
+                            class="db-field-input"
+                            id="db_input_${field.key}"
+                            data-field="${field.key}"
+                            data-group="${group.id}"
+                            value="${DAUGHTERBOARD_PLACEHOLDER}"
+                            readonly
+                            disabled
+                        >
+                    </span>
+                `;
+            } else {
+                fieldEl.innerHTML = `
+                    <span class="daughterboard-field-line">
+                        <span class="daughterboard-field-label">${field.label}:</span>
+                        <span class="daughterboard-field-value" id="db_field_${field.key}">${DAUGHTERBOARD_PLACEHOLDER}</span>
+                    </span>
+                `;
+            }
+
+            fieldsWrap.appendChild(fieldEl);
+        });
+
+        panel.appendChild(fieldsWrap);
+        panels.appendChild(panel);
+    });
+
+    panels.dataset.initialized = "true";
+    initDaughterboardEditControls();
+}
+
+function updateDaughterboardReadoutDnas() {
+    const fieldA = document.getElementById("db_field_kintex_a_readout");
+    const fieldB = document.getElementById("db_field_kintex_b_readout");
+    if (fieldA) fieldA.textContent = getReadoutDna("ku_side_a_dna");
+    if (fieldB) fieldB.textContent = getReadoutDna("ku_side_b_dna");
+}
+
+function setTestCheckbox(field, value) {
+    const checkbox = document.getElementById(`db_checkbox_${field}`);
+    if (!checkbox) return;
+    checkbox.checked = Number(value) === 1;
+}
+
+function applyDaughterboardValues(daughterboard) {
+    if (!daughterboard) {
+        return;
+    }
+
+    DAUGHTERBOARD_GROUPS.forEach(group => {
+        group.fields.forEach(field => {
+            if (field.type === "checkbox") {
+                setTestCheckbox(field.key, daughterboard[field.key]);
+                return;
+            }
+
+            if (field.type === "lot") {
+                populateLotSelect(field.key, field.componentType, daughterboard[field.key]);
+                return;
+            }
+
+            if (field.type === "datetime") {
+                const display = formatDatetimeDisplay(daughterboard[field.key]);
+                const displayEl = document.getElementById(`db_field_${field.key}`);
+                const input = document.getElementById(`db_input_${field.key}`);
+                if (displayEl) {
+                    displayEl.textContent = display;
+                }
+                if (input) {
+                    input.value = datetimeToInputValue(daughterboard[field.key]);
+                }
+                return;
+            }
+
+            if (field.registerEditable) {
+                const display = formatDaughterboardValue(field.key, daughterboard[field.key]);
+                const displayEl = document.getElementById(`db_field_${field.key}`);
+                const input = document.getElementById(`db_input_${field.key}`);
+                if (displayEl) {
+                    displayEl.textContent = display;
+                }
+                if (input) {
+                    input.value = display === DAUGHTERBOARD_PLACEHOLDER ? "" : display;
+                }
+                return;
+            }
+
+            if (field.readoutId) {
+                return;
+            }
+
+            const value = formatDaughterboardValue(field.key, daughterboard[field.key]);
+            if (field.editable) {
+                const input = document.getElementById(`db_input_${field.key}`);
+                if (input) {
+                    input.value = value;
+                }
+            } else {
+                const el = document.getElementById(`db_field_${field.key}`);
+                if (el) {
+                    el.textContent = value;
+                }
+            }
+        });
+    });
+
+    updateDaughterboardReadoutDnas();
+}
+
+function setDaughterboardPlaceholderValues(options = {}) {
+    const preserveRegistration = options.preserveRegistration === true;
+    initDaughterboardGrid();
+    if (!preserveRegistration) {
+        currentDaughterboardSerial = null;
+        currentDaughterboardData = null;
+        lockAllEditModes(false);
+        updateDaughterboardSerialSummary(null);
+    }
+
+    DAUGHTERBOARD_GROUPS.forEach(group => {
+        group.fields.forEach(field => {
+            if (field.type === "checkbox") {
+                setTestCheckbox(field.key, 0);
+                return;
+            }
+            if (field.type === "lot") {
+                populateLotSelect(field.key, field.componentType, DAUGHTERBOARD_PLACEHOLDER);
+                const select = document.getElementById(`db_select_${field.key}`);
+                if (select) {
+                    select.disabled = true;
+                }
+                return;
+            }
+            if (field.type === "datetime") {
+                const displayEl = document.getElementById(`db_field_${field.key}`);
+                const input = document.getElementById(`db_input_${field.key}`);
+                if (displayEl) {
+                    displayEl.textContent = DAUGHTERBOARD_PLACEHOLDER;
+                    displayEl.hidden = false;
+                }
+                if (input) {
+                    input.value = "";
+                    input.hidden = true;
+                    input.disabled = true;
+                }
+                return;
+            }
+            if (field.registerEditable) {
+                const displayEl = document.getElementById(`db_field_${field.key}`);
+                const input = document.getElementById(`db_input_${field.key}`);
+                if (displayEl) {
+                    displayEl.textContent = DAUGHTERBOARD_PLACEHOLDER;
+                    displayEl.hidden = !preserveRegistration;
+                }
+                if (input) {
+                    input.value = "";
+                    input.hidden = preserveRegistration ? false : true;
+                    input.disabled = !preserveRegistration;
+                }
+                return;
+            }
+            if (field.readoutId) {
+                return;
+            }
+            if (field.editable) {
+                const input = document.getElementById(`db_input_${field.key}`);
+                if (input) {
+                    input.value = DAUGHTERBOARD_PLACEHOLDER;
+                    input.readOnly = true;
+                    input.disabled = true;
+                }
+            } else {
+                const el = document.getElementById(`db_field_${field.key}`);
+                if (el) el.textContent = DAUGHTERBOARD_PLACEHOLDER;
+            }
+        });
+    });
+
+    updateDaughterboardReadoutDnas();
+    updateEditModeUI();
+}
+
+function formatDaughterboardValue(key, value) {
+    if (value === null || value === undefined || value === "") {
+        return DAUGHTERBOARD_PLACEHOLDER;
+    }
+    if (DB_DATETIME_FIELDS.has(key)) {
+        return formatDatetimeDisplay(value);
+    }
+    if (typeof value === "boolean") {
+        return value ? "Yes" : "No";
+    }
+    return String(value);
+}
+
+function resetDaughterboardSection(message) {
+    exitRegistrationMode();
+    const status = document.getElementById("daughterboard-data-status");
+    if (!status) return;
+
+    status.className = "daughterboard-status";
+    status.textContent = message || "No matched daughterboard";
+    updateDaughterboardSerialSummary(null);
+    setDaughterboardPlaceholderValues();
+}
+
+function setDaughterboardSectionState(state, message) {
+    const status = document.getElementById("daughterboard-data-status");
+    if (!status) return;
+    status.className = `daughterboard-status ${state}`;
+    status.textContent = message;
+}
+
+function renderDaughterboardData(daughterboard, options = {}) {
+    if (!daughterboard) return;
+
+    exitRegistrationMode();
+    const preserveEditModes = options.preserveEditModes === true;
+    const savedGlobal = globalEditUnlocked;
+    const savedGroups = { ...groupEditUnlocked };
+
+    initDaughterboardGrid();
+    currentDaughterboardSerial = daughterboard.serial_no;
+    currentDaughterboardData = daughterboard;
+
+    const decoded = daughterboard.serial_decoded || decodeSerialNo(daughterboard.serial_no);
+    const batchLabel = decoded ? decoded.batch_no : DAUGHTERBOARD_PLACEHOLDER;
+    setDaughterboardSectionState(
+        "matched",
+        `Matched daughterboard serial ${daughterboard.serial_no} (batch ${batchLabel}).`
+    );
+
+    updateDaughterboardSerialSummary(daughterboard.serial_no);
+    applyDaughterboardValues(daughterboard);
+
+    if (preserveEditModes) {
+        globalEditUnlocked = savedGlobal;
+        Object.assign(groupEditUnlocked, savedGroups);
+    } else {
+        lockAllEditModes(false);
+    }
+
+    updateEditModeUI();
+}
+
+async function refreshDaughterboardSectionFromDnas() {
+    const dnaA = document.getElementById("ku_side_a_dna")?.innerText;
+    const dnaB = document.getElementById("ku_side_b_dna")?.innerText;
+
+    if (!dnaA || dnaA === "---" || !dnaB || dnaB === "---") {
+        resetDaughterboardSection("Waiting for both side A and side B KU DNAs.");
+        return;
+    }
+
+    try {
+        const res = await fetch("api/daughterboard/lookup", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ dna_a: dnaA, dna_b: dnaB }),
+        });
+        const data = await res.json();
+
+        if (data.status === "matched" && data.daughterboard) {
+            renderDaughterboardData(data.daughterboard);
+            return;
+        }
+
+        if (data.both_unregistered) {
+            const register = confirm(
+                "Neither KU DNA is registered in the database.\n\nRegister this daughterboard now?"
+            );
+            if (register) {
+                enterRegistrationMode();
+                return;
+            }
+        }
+
+        const state = ["not_found", "mismatch_serial", "mismatch_side"].includes(data.status)
+            ? "error"
+            : "warning";
+        setDaughterboardSectionState(state, data.message || "Could not match daughterboard data.");
+        updateDaughterboardSerialSummary(null);
+        setDaughterboardPlaceholderValues();
+    } catch (err) {
+        console.error("Failed to load daughterboard data:", err);
+        setDaughterboardSectionState("error", "Failed to load daughterboard data from database.");
+        setDaughterboardPlaceholderValues();
+    }
+}
+
+async function refreshDaughterboardSectionFromSerial(serial) {
+    if (!serial || serial === "---" || serial === "Not in DB") {
+        resetDaughterboardSection("Waiting for a matched daughterboard serial.");
+        return;
+    }
+
+    try {
+        const res = await fetch(`api/daughterboard/${serial}`);
+        if (!res.ok) throw new Error("not found");
+        const data = await res.json();
+        renderDaughterboardData(data.daughterboard);
+    } catch (err) {
+        setDaughterboardSectionState("error", `Daughterboard ${serial} not found in database.`);
+        setDaughterboardPlaceholderValues();
+    }
 }
 
 
@@ -361,9 +1520,15 @@ function updateDbBoxes() {
             box.classList.add("green-text");
         }
     });
+
+    if (equal && sideA.serial !== "---" && sideA.serial !== "Not in DB") {
+        refreshDaughterboardSectionFromSerial(sideA.serial);
+    }
 }
 
 async function startAction(action, type) {
+    lockAllEditModes(true);
+
     // Update HW status before starting
     await updateDetectedHW();
 
@@ -462,6 +1627,13 @@ async function startAction(action, type) {
 
         if (data.source === "ku") {
 
+            if (data.daughterboard_status === "matched" && data.daughterboard) {
+                renderDaughterboardData(data.daughterboard);
+            } else if (data.daughterboard_status === "mismatch_serial") {
+                setDaughterboardSectionState("error", data.line || "DNAs belong to different daughterboards.");
+                setDaughterboardPlaceholderValues();
+            }
+
             // ----------------------
             // Correct DB match
             // ----------------------
@@ -470,7 +1642,8 @@ async function startAction(action, type) {
                 const side = data.side.toLowerCase();
 
                 document.getElementById(`ku_side_${side}_serial`).innerText = data.serial_no;
-                document.getElementById(`ku_side_${side}_batch`).innerText = data.batch_id;
+                document.getElementById(`ku_side_${side}_batch`).innerText =
+                    data.batch_no || formatBatchNoFromSerial(data.serial_no);
 
                 updateDbBoxes();
             }
@@ -483,7 +1656,8 @@ async function startAction(action, type) {
                 const side = data.expected_side.toLowerCase();
 
                 document.getElementById(`ku_side_${side}_serial`).innerText = data.serial_no;
-                document.getElementById(`ku_side_${side}_batch`).innerText = data.batch_id;
+                document.getElementById(`ku_side_${side}_batch`).innerText =
+                    data.batch_no || formatBatchNoFromSerial(data.serial_no);
 
                 const box = document.getElementById(`db_side_${side}_box`);
                 if (box) {
@@ -511,6 +1685,9 @@ async function startAction(action, type) {
                     const box = document.getElementById(id);
                     if (box) box.classList.add("blink-red");
                 });
+
+                setDaughterboardSectionState("error", "One or both KU DNAs are not registered in the database.");
+                setDaughterboardPlaceholderValues();
             }
         }
 
@@ -750,6 +1927,9 @@ function parseKuID(line) {
     if (serial === hwConfig.ku.sides.b.serial) {
         document.getElementById("ku_side_b_dna").innerText = dna;
     }
+
+    refreshDaughterboardSectionFromDnas();
+    updateDaughterboardReadoutDnas();
 }
 
 
@@ -888,17 +2068,6 @@ function clearConsole(group) {
 
 
 
-document.addEventListener('DOMContentLoaded', async () => {
-    try {
-        const response = await fetch('api/get_hostname'); // Update to your actual endpoint
-        const data = await response.json();
-        document.getElementById('hostname-value').textContent = data.hostname;
-    } catch (error) {
-        document.getElementById('hostname-value').textContent = "Unknown";
-    }
-});
-
-
 // Update CPU/RAM every 5 seconds
 async function updateSystemUsage() {
     try {
@@ -989,25 +2158,11 @@ document.getElementById("restart-tile-wjtag").addEventListener("click", () => {
     setTimeout(waitForServer, 3000);
 });
 
-// Set hostname on load
-document.addEventListener('DOMContentLoaded', async () => {
-    try {
-        const response = await fetch('api/get_hostname');
-        const data = await response.json();
-        document.getElementById('hostname-value').textContent = data.hostname;
-    } catch (error) {
-        document.getElementById('hostname-value').textContent = "Unknown";
-    }
-});
-
-
-async function updatePowerState(side) {
-    const res = await fetch(`api/power_state/${side}`);
-    const data = await res.json();
-
+function setPowerButton(side, state) {
     const btn = document.getElementById(`power_${side}_btn`);
+    if (!btn) return;
 
-    if (data.state === "on") {
+    if (state === "on") {
         btn.classList.remove("off");
         btn.classList.add("on");
         btn.innerText = "ON";
@@ -1018,9 +2173,22 @@ async function updatePowerState(side) {
     }
 }
 
+async function updatePowerStates() {
+    try {
+        const res = await fetch("api/power_states");
+        const data = await res.json();
+
+        for (const [side, state] of Object.entries(data.states || {})) {
+            setPowerButton(side, state);
+        }
+    } catch (err) {
+        console.error("Failed to fetch power states:", err);
+    }
+}
+
 async function togglePower(side) {
     await fetch(`api/power_toggle/${side}`, { method: "POST" });
-    setTimeout(() => updatePowerState(side), 500);
+    setTimeout(() => updatePowerStates(), 500);
 }
 
 document.getElementById("power_a_btn").addEventListener("click", () => {
@@ -1033,11 +2201,7 @@ document.getElementById("power_b_btn").addEventListener("click", () => {
 });
 
 // Auto refresh every 5 seconds
-setInterval(() => {
-    updatePowerState("a");
-    updatePowerState("b");
-}, 5000);
+setInterval(updatePowerStates, 5000);
 
 // Initial load
-updatePowerState("a");
-updatePowerState("b");
+updatePowerStates();

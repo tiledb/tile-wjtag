@@ -43,9 +43,37 @@
         </div>
 
 
+        <!-- ================= DAUGHTERBOARD DATA ================= -->
+        <div class="group daughterboard-group" id="daughterboard-data-section">
+            <h2 class="daughterboard-header">
+                <span class="daughterboard-title">Daughterboard Data</span>
+                <span id="daughterboard-data-status" class="daughterboard-status">No matched daughterboard</span>
+                <div class="daughterboard-global-lock">
+                    <span id="db-edit-idle-countdown" class="db-edit-idle-countdown" hidden></span>
+                    <button type="button" id="db-global-edit-btn" class="db-edit-btn locked" disabled>
+                        Global: Locked
+                    </button>
+                </div>
+            </h2>
+            <div id="daughterboard-data-summary" class="daughterboard-summary">
+                DB Serial: <strong id="db_summary_serial">xxx</strong> |
+                Tag: <strong id="db_summary_tag">xxx</strong> |
+                Batch: <strong id="db_summary_batch_no">xxx</strong> |
+                DB#: <strong id="db_summary_db_no">xxx</strong>
+            </div>
+            <div class="daughterboard-register-actions">
+                <button type="button" id="db-register-btn" class="db-save-btn" hidden>
+                    Register DB
+                </button>
+            </div>
+            <div id="daughterboard-data-panels" class="daughterboard-panels"></div>
+        </div>
+
+
+        <div class="operations-stack">
         <!-- ================= XILINX GROUP ================= -->
         <div class="group">
-            <h2 style="display: flex; align-items: center; gap: 10px;">
+            <h2 class="group-header">
                 Xilinx KU Operations
                 <div class="programmer-control">
                     <button id="power_a_btn" class="power-btn off">OFF</button>
@@ -164,7 +192,7 @@
 
         <!-- ================= PROASIC GROUP ================= -->
         <div class="group">
-            <h2 style="display: flex; align-items: center; gap: 10px;">
+            <h2 class="group-header">
                 ProASIC Operations
                 <div id="proasic_side_a_box" class="id-box">A: ---</div>
                 <div id="proasic_side_b_box" class="id-box">B: ---</div>
@@ -227,6 +255,7 @@
 
 
 
+        </div>
         </div>
         <!-- 
         <h2>Console</h2>

@@ -16,3 +16,7 @@ flashpro_logs/*
 tile_wjtag_webserver/tcl/*
 tile_wjtag_webserver/tcl_proasic/logged/*
 tile_wjtag_webserver/tcl_proasic/fp_projects_log/*
+*.bit
+*.bin
+*.ltx
+*.rbt
