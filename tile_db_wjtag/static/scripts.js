@@ -200,6 +200,7 @@ document.addEventListener("DOMContentLoaded", () => {
     loadComponentLots();
     loadHwConfig();
     initEditIdleTracking();
+    initDnaChoiceModal();
 });
 
 
@@ -235,6 +236,12 @@ let currentDaughterboardSerial = null;
 let currentDaughterboardData = null;
 let registrationMode = false;
 let globalEditUnlocked = false;
+let registrationExistingSerial = null;
+let registrationDnaChoice = "keep";
+let daughterboardBaseline = null;
+let serialLookupTimer = null;
+let serialLookupRequestId = 0;
+let dnaChoiceResolver = null;
 const EDIT_IDLE_TIMEOUT_SEC = 60;
 let editIdleSecondsRemaining = EDIT_IDLE_TIMEOUT_SEC;
 let editIdleInterval = null;
@@ -255,7 +262,7 @@ const DAUGHTERBOARD_GROUPS = [
             { key: "serial_no", label: "Serial Number", registerEditable: true },
             { key: "kintex_a_readout", label: "Kintex A DNA", readoutId: "ku_side_a_dna" },
             { key: "kintex_b_readout", label: "Kintex B DNA", readoutId: "ku_side_b_dna" },
-            { key: "db_status", label: "DB Status", editable: true, inputType: "number" },
+            { key: "db_status", label: "DB Status" },
             { key: "e_test", label: "E-Test", type: "checkbox", editable: true },
             { key: "p_test", label: "P-Test", type: "checkbox", editable: true },
         ],
@@ -311,16 +318,16 @@ function decodeSerialNo(serialNo) {
         return null;
     }
 
-    const padded = text.replace(/\D/g, "").padStart(7, "0");
-    if (padded.length !== 7) {
+    const digits = text.replace(/\D/g, "");
+    if (digits.length !== 7) {
         return null;
     }
 
     return {
-        serial_no: Number(padded),
-        tag: padded.slice(0, 2),
-        batch_no: padded.slice(2, 4),
-        db_no: padded.slice(4, 7),
+        serial_no: Number(digits),
+        tag: digits.slice(0, 2),
+        batch_no: digits.slice(2, 4),
+        db_no: digits.slice(4, 7),
     };
 }
 
@@ -351,11 +358,273 @@ function updateRegistrationUI() {
     if (registerBtn) {
         registerBtn.hidden = !registrationMode;
         registerBtn.disabled = !registrationMode;
+        registerBtn.textContent = registrationExistingSerial ? "Update DB" : "Register DB";
     }
+}
+
+function clearDaughterboardBaseline() {
+    daughterboardBaseline = null;
+    registrationExistingSerial = null;
+    registrationDnaChoice = "keep";
+}
+
+function formatDnaForCompare(value) {
+    return normalizeFieldValue("kintex_a_id", value);
+}
+
+function getDnaDiffSummary(daughterboard, options = {}) {
+    const programmer = getProgrammerDnas();
+    const dbA = formatDnaForCompare(daughterboard?.kintex_a_id);
+    const dbB = formatDnaForCompare(daughterboard?.kintex_b_id);
+    const readA = formatDnaForCompare(programmer.dna_a);
+    const readB = formatDnaForCompare(programmer.dna_b);
+    const onlySides = Array.isArray(options.sides) && options.sides.length
+        ? new Set(options.sides.map(side => String(side).toUpperCase()))
+        : null;
+
+    const sides = [
+        {
+            side: "A",
+            db: dbA,
+            read: readA,
+            changed: Boolean(readA || dbA) && dbA !== readA,
+        },
+        {
+            side: "B",
+            db: dbB,
+            read: readB,
+            changed: Boolean(readB || dbB) && dbB !== readB,
+        },
+    ].filter(side => !onlySides || onlySides.has(side.side));
+
+    return {
+        sides,
+        hasChanges: sides.some(side => side.changed),
+        hasReadableDnas: sides.some(side => Boolean(side.read)),
+    };
+}
+
+function applyRegistrationChosenDnas(daughterboard, choice) {
+    const programmer = getProgrammerDnas();
+    const useNew = choice === "replace";
+    const fieldA = document.getElementById("db_field_kintex_a_readout");
+    const fieldB = document.getElementById("db_field_kintex_b_readout");
+
+    const dnaA = useNew && programmer.dna_a
+        ? programmer.dna_a
+        : daughterboard?.kintex_a_id;
+    const dnaB = useNew && programmer.dna_b
+        ? programmer.dna_b
+        : daughterboard?.kintex_b_id;
+
+    if (fieldA) {
+        fieldA.textContent = formatDaughterboardValue("kintex_a_id", dnaA);
+    }
+    if (fieldB) {
+        fieldB.textContent = formatDaughterboardValue("kintex_b_id", dnaB);
+    }
+}
+
+function closeDnaChoiceModal(choice = null) {
+    const modal = document.getElementById("dna-choice-modal");
+    if (modal) {
+        modal.hidden = true;
+    }
+
+    const keepBtn = document.getElementById("dna-choice-keep");
+    const replaceBtn = document.getElementById("dna-choice-replace");
+    if (keepBtn) {
+        keepBtn.textContent = "Keep database DNAs";
+    }
+    if (replaceBtn) {
+        replaceBtn.textContent = "Use newly read DNAs";
+    }
+
+    if (dnaChoiceResolver) {
+        const resolve = dnaChoiceResolver;
+        dnaChoiceResolver = null;
+        resolve(choice);
+    }
+}
+
+function promptDnaChoice(daughterboard, options = {}) {
+    const diff = getDnaDiffSummary(daughterboard, options);
+    if (!diff.hasChanges) {
+        return Promise.resolve("keep");
+    }
+
+    const modal = document.getElementById("dna-choice-modal");
+    const message = document.getElementById("dna-choice-message");
+    const diffEl = document.getElementById("dna-choice-diff");
+    const title = document.getElementById("dna-choice-title");
+    const keepBtn = document.getElementById("dna-choice-keep");
+    const replaceBtn = document.getElementById("dna-choice-replace");
+
+    const defaultTitle = `DNA mismatch for serial ${daughterboard.serial_no}`;
+    const defaultMessage = (
+        "This daughterboard already exists. Choose whether to keep the DNAs " +
+        "stored in the database or replace them with the newly read programmer DNAs."
+    );
+
+    if (!modal || !message || !diffEl) {
+        const lines = diff.sides
+            .filter(side => side.changed)
+            .map(side => (
+                `Side ${side.side}:\n` +
+                `  Database: ${side.db || "(empty)"}\n` +
+                `  Newly read: ${side.read || "(empty)"}`
+            ))
+            .join("\n\n");
+        const useNew = confirm(
+            `${options.title || defaultTitle}\n\n${lines}\n\n` +
+            "OK = use newly read DNAs\nCancel = keep database DNAs"
+        );
+        return Promise.resolve(useNew ? "replace" : "keep");
+    }
+
+    if (title) {
+        title.textContent = options.title || defaultTitle;
+    }
+    message.textContent = options.message || defaultMessage;
+    if (keepBtn) {
+        keepBtn.textContent = options.keepLabel || "Keep database DNAs";
+    }
+    if (replaceBtn) {
+        replaceBtn.textContent = options.replaceLabel || "Use newly read DNAs";
+    }
+
+    diffEl.innerHTML = diff.sides.map(side => `
+        <div class="dna-choice-row ${side.changed ? "changed" : ""}">
+            <div class="side-label">Kintex ${side.side}${side.changed ? " (different)" : " (same)"}</div>
+            <div class="dna-line"><span>Database:</span><span>${side.db || "(empty)"}</span></div>
+            <div class="dna-line"><span>Newly read:</span><span>${side.read || "(empty)"}</span></div>
+        </div>
+    `).join("");
+
+    modal.hidden = false;
+
+    return new Promise(resolve => {
+        dnaChoiceResolver = resolve;
+    });
+}
+
+function initDnaChoiceModal() {
+    const keepBtn = document.getElementById("dna-choice-keep");
+    const replaceBtn = document.getElementById("dna-choice-replace");
+    const modal = document.getElementById("dna-choice-modal");
+
+    if (keepBtn && !keepBtn.dataset.wired) {
+        keepBtn.addEventListener("click", () => closeDnaChoiceModal("keep"));
+        keepBtn.dataset.wired = "true";
+    }
+    if (replaceBtn && !replaceBtn.dataset.wired) {
+        replaceBtn.addEventListener("click", () => closeDnaChoiceModal("replace"));
+        replaceBtn.dataset.wired = "true";
+    }
+    if (modal && !modal.dataset.wired) {
+        modal.addEventListener("click", event => {
+            if (event.target === modal) {
+                closeDnaChoiceModal("keep");
+            }
+        });
+        modal.dataset.wired = "true";
+    }
+}
+
+function snapshotDaughterboardBaseline(daughterboard, extra = {}) {
+    if (!daughterboard) {
+        clearDaughterboardBaseline();
+        return;
+    }
+
+    const snapshot = {};
+    DAUGHTERBOARD_GROUPS.forEach(group => {
+        group.fields.forEach(field => {
+            if (!field.editable) {
+                return;
+            }
+            snapshot[field.key] = normalizeFieldValue(field.key, daughterboard[field.key]);
+        });
+    });
+
+    snapshot.kintex_a_id = normalizeFieldValue("kintex_a_id", daughterboard.kintex_a_id);
+    snapshot.kintex_b_id = normalizeFieldValue("kintex_b_id", daughterboard.kintex_b_id);
+    Object.assign(snapshot, extra);
+    daughterboardBaseline = snapshot;
+}
+
+function normalizeFieldValue(key, value) {
+    if (value === null || value === undefined) {
+        return null;
+    }
+
+    if (typeof value === "boolean") {
+        return value ? 1 : 0;
+    }
+
+    if (DB_DATETIME_FIELDS.has(key)) {
+        const display = formatDatetimeDisplay(value);
+        return display === DAUGHTERBOARD_PLACEHOLDER ? null : display;
+    }
+
+    if (key === "e_test" || key === "p_test" || key === "db_status") {
+        if (value === "" || String(value).toLowerCase() === "xxx") {
+            return null;
+        }
+        const num = Number(value);
+        return Number.isNaN(num) ? null : num;
+    }
+
+    const text = String(value).trim();
+    if (!text || text.toLowerCase() === "xxx") {
+        return null;
+    }
+    return text;
+}
+
+function fieldValuesEqual(key, left, right) {
+    return normalizeFieldValue(key, left) === normalizeFieldValue(key, right);
+}
+
+function collectDirtyFields(candidateValues) {
+    if (!daughterboardBaseline) {
+        return { ...candidateValues };
+    }
+
+    const dirty = {};
+    Object.keys(candidateValues).forEach(key => {
+        if (key === "serial_no") {
+            return;
+        }
+        if (!fieldValuesEqual(key, candidateValues[key], daughterboardBaseline[key])) {
+            dirty[key] = candidateValues[key];
+        }
+    });
+    return dirty;
+}
+
+function getProgrammerDnas() {
+    const dnaA = document.getElementById("ku_side_a_dna")?.innerText?.trim();
+    const dnaB = document.getElementById("ku_side_b_dna")?.innerText?.trim();
+    return {
+        dna_a: dnaA && dnaA !== "---" ? dnaA : null,
+        dna_b: dnaB && dnaB !== "---" ? dnaB : null,
+    };
+}
+
+function applyRegistrationDbDnas(daughterboard) {
+    applyRegistrationChosenDnas(daughterboard, registrationDnaChoice);
 }
 
 function exitRegistrationMode() {
     registrationMode = false;
+    registrationExistingSerial = null;
+    registrationDnaChoice = "keep";
+    closeDnaChoiceModal(null);
+    if (serialLookupTimer) {
+        clearTimeout(serialLookupTimer);
+        serialLookupTimer = null;
+    }
     updateRegistrationUI();
 }
 
@@ -363,8 +632,11 @@ function enterRegistrationMode() {
     registrationMode = true;
     currentDaughterboardSerial = null;
     currentDaughterboardData = null;
+    clearDaughterboardBaseline();
     globalEditUnlocked = true;
-    groupEditUnlocked.info = true;
+    Object.keys(groupEditUnlocked).forEach(groupId => {
+        groupEditUnlocked[groupId] = true;
+    });
 
     setDaughterboardPlaceholderValues({ preserveRegistration: true });
     setDaughterboardSectionState(
@@ -374,6 +646,136 @@ function enterRegistrationMode() {
     updateDaughterboardSerialSummary(null);
     updateRegistrationUI();
     updateEditModeUI();
+}
+
+async function lookupSerialForRegistration(serialNo) {
+    const requestId = ++serialLookupRequestId;
+    try {
+        const res = await fetch(`api/daughterboard/${serialNo}`);
+        if (requestId !== serialLookupRequestId || !registrationMode) {
+            return;
+        }
+
+        if (res.status === 404) {
+            registrationExistingSerial = null;
+            currentDaughterboardSerial = null;
+            currentDaughterboardData = null;
+            clearDaughterboardBaseline();
+            const serialRaw = document.getElementById("db_input_serial_no")?.value;
+            setDaughterboardPlaceholderValues({ preserveRegistration: true });
+            const serialInput = document.getElementById("db_input_serial_no");
+            if (serialInput && serialRaw) {
+                serialInput.value = serialRaw;
+            }
+            updateDaughterboardSerialSummary(serialNo);
+            setDaughterboardSectionState(
+                "warning",
+                `Serial ${serialNo} is not in the database. Fill required fields and click Register DB.`
+            );
+            updateRegistrationUI();
+            updateEditModeUI();
+            return;
+        }
+
+        if (!res.ok) {
+            throw new Error("lookup failed");
+        }
+
+        const data = await res.json();
+        if (requestId !== serialLookupRequestId || !registrationMode) {
+            return;
+        }
+
+        loadExistingDaughterboardForRegistration(data.daughterboard);
+    } catch (err) {
+        if (requestId !== serialLookupRequestId || !registrationMode) {
+            return;
+        }
+        console.error("Failed to look up daughterboard serial:", err);
+        setDaughterboardSectionState("error", `Failed to look up serial ${serialNo}.`);
+    }
+}
+
+async function loadExistingDaughterboardForRegistration(daughterboard) {
+    if (!daughterboard) {
+        return;
+    }
+
+    registrationExistingSerial = daughterboard.serial_no;
+    currentDaughterboardSerial = daughterboard.serial_no;
+    currentDaughterboardData = daughterboard;
+    snapshotDaughterboardBaseline(daughterboard);
+
+    Object.keys(groupEditUnlocked).forEach(groupId => {
+        groupEditUnlocked[groupId] = true;
+    });
+
+    applyDaughterboardValues(daughterboard);
+
+    const dnaDiff = getDnaDiffSummary(daughterboard);
+    if (dnaDiff.hasChanges) {
+        const choice = await promptDnaChoice(daughterboard);
+        if (!registrationMode || registrationExistingSerial !== daughterboard.serial_no) {
+            return;
+        }
+        registrationDnaChoice = choice || "keep";
+    } else {
+        registrationDnaChoice = "keep";
+    }
+
+    applyRegistrationChosenDnas(daughterboard, registrationDnaChoice);
+
+    const serialInput = document.getElementById("db_input_serial_no");
+    if (serialInput) {
+        serialInput.value = String(daughterboard.serial_no);
+        serialInput.hidden = false;
+        serialInput.disabled = false;
+        serialInput.readOnly = false;
+        const display = document.getElementById("db_field_serial_no");
+        if (display) {
+            display.hidden = true;
+        }
+    }
+
+    updateDaughterboardSerialSummary(daughterboard.serial_no);
+    const dnaNote = registrationDnaChoice === "replace"
+        ? " Newly read DNAs will be written on Update."
+        : dnaDiff.hasChanges
+            ? " Database DNAs will be kept."
+            : "";
+    setDaughterboardSectionState(
+        "matched",
+        `Serial ${daughterboard.serial_no} already exists — fields loaded. Only changed values will be saved.${dnaNote}`
+    );
+    updateRegistrationUI();
+    updateEditModeUI();
+}
+
+function scheduleSerialLookupFromInput() {
+    if (!registrationMode) {
+        return;
+    }
+
+    const serialInput = document.getElementById("db_input_serial_no");
+    const decoded = decodeSerialNo(serialInput?.value);
+    updateDaughterboardSerialSummary(decoded ? decoded.serial_no : null);
+
+    if (serialLookupTimer) {
+        clearTimeout(serialLookupTimer);
+        serialLookupTimer = null;
+    }
+
+    if (!decoded) {
+        registrationExistingSerial = null;
+        clearDaughterboardBaseline();
+        updateRegistrationUI();
+        return;
+    }
+
+    serialLookupTimer = setTimeout(() => {
+        serialLookupTimer = null;
+        lookupSerialForRegistration(decoded.serial_no);
+    }, 400);
 }
 
 function collectRegistrationFieldValues() {
@@ -417,6 +819,23 @@ function collectRegistrationFieldValues() {
     return values;
 }
 
+function collectDnaUpdatesForRegistration() {
+    if (registrationDnaChoice !== "replace") {
+        return {};
+    }
+
+    const { dna_a: dnaA, dna_b: dnaB } = getProgrammerDnas();
+    const updates = {};
+
+    if (dnaA && !fieldValuesEqual("kintex_a_id", dnaA, daughterboardBaseline?.kintex_a_id)) {
+        updates.kintex_a_id = dnaA;
+    }
+    if (dnaB && !fieldValuesEqual("kintex_b_id", dnaB, daughterboardBaseline?.kintex_b_id)) {
+        updates.kintex_b_id = dnaB;
+    }
+    return updates;
+}
+
 async function registerDaughterboard() {
     const serialInput = document.getElementById("db_input_serial_no");
     const serialRaw = serialInput?.value?.trim();
@@ -433,9 +852,10 @@ async function registerDaughterboard() {
         return;
     }
 
-    const dnaA = document.getElementById("ku_side_a_dna")?.innerText?.trim();
-    const dnaB = document.getElementById("ku_side_b_dna")?.innerText?.trim();
-    if (!dnaA || dnaA === "---" || !dnaB || dnaB === "---") {
+    const { dna_a: dnaA, dna_b: dnaB } = getProgrammerDnas();
+    const isUpdate = Boolean(registrationExistingSerial);
+
+    if (!isUpdate && (!dnaA || !dnaB)) {
         alert("Both side A and side B KU DNAs are required before registering.");
         return;
     }
@@ -443,13 +863,45 @@ async function registerDaughterboard() {
     const registerBtn = document.getElementById("db-register-btn");
     if (registerBtn) {
         registerBtn.disabled = true;
-        registerBtn.textContent = "Registering...";
+        registerBtn.textContent = isUpdate ? "Updating..." : "Registering...";
     }
 
     const fieldValues = collectRegistrationFieldValues();
     delete fieldValues.serial_no;
 
     try {
+        if (isUpdate) {
+            const dirtyFields = collectDirtyFields(fieldValues);
+            Object.assign(dirtyFields, collectDnaUpdatesForRegistration());
+
+            if (Object.keys(dirtyFields).length === 0) {
+                alert("No fields were changed.");
+                return;
+            }
+
+            const res = await fetch(`api/daughterboard/${decoded.serial_no}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ fields: dirtyFields }),
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                throw new Error(data.error || "update failed");
+            }
+
+            exitRegistrationMode();
+            if (data.daughterboard) {
+                renderDaughterboardData(data.daughterboard);
+                const forceDnaSync = Object.prototype.hasOwnProperty.call(dirtyFields, "kintex_a_id")
+                    || Object.prototype.hasOwnProperty.call(dirtyFields, "kintex_b_id");
+                syncKuDbBoxesFromDaughterboard(
+                    data.daughterboard,
+                    forceDnaSync ? { force: true } : {}
+                );
+            }
+            return;
+        }
+
         const res = await fetch("api/daughterboard/register", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -468,14 +920,15 @@ async function registerDaughterboard() {
         exitRegistrationMode();
         if (data.daughterboard) {
             renderDaughterboardData(data.daughterboard);
+            syncKuDbBoxesFromDaughterboard(data.daughterboard, { force: true });
         }
     } catch (err) {
-        console.error("Failed to register daughterboard:", err);
-        alert(`Failed to register daughterboard: ${err.message}`);
+        console.error("Failed to register/update daughterboard:", err);
+        alert(`Failed to ${isUpdate ? "update" : "register"} daughterboard: ${err.message}`);
     } finally {
         if (registerBtn) {
             registerBtn.disabled = false;
-            registerBtn.textContent = "Register DB";
+            registerBtn.textContent = registrationExistingSerial ? "Update DB" : "Register DB";
         }
     }
 }
@@ -591,8 +1044,11 @@ function isGroupEditable(groupId) {
 }
 
 function isFieldEditable(groupId, field) {
-    if (registrationMode && field.registerEditable && groupId === "info") {
-        return isGroupEditable(groupId);
+    if (registrationMode) {
+        if (field.registerEditable || field.editable) {
+            return isGroupEditable(groupId);
+        }
+        return false;
     }
     return Boolean(field.editable) && isGroupEditable(groupId);
 }
@@ -839,11 +1295,7 @@ function initDaughterboardEditControls() {
     const serialInput = document.getElementById("db_input_serial_no");
     if (serialInput && !serialInput.dataset.wiredSummary) {
         serialInput.addEventListener("input", () => {
-            if (!registrationMode) {
-                return;
-            }
-            const decoded = decodeSerialNo(serialInput.value);
-            updateDaughterboardSerialSummary(decoded ? decoded.serial_no : null);
+            scheduleSerialLookupFromInput();
         });
         serialInput.dataset.wiredSummary = "true";
     }
@@ -922,7 +1374,16 @@ async function saveGroupEdits(groupId) {
     }
 
     const group = getDaughterboardGroup(groupId);
-    const fields = collectGroupFieldValues(groupId);
+    const fields = collectDirtyFields(collectGroupFieldValues(groupId));
+
+    if (Object.keys(fields).length === 0) {
+        groupEditUnlocked[groupId] = false;
+        if (currentDaughterboardData) {
+            applyDaughterboardValues(currentDaughterboardData);
+        }
+        updateEditModeUI();
+        return;
+    }
 
     const saveBtn = document.getElementById(`db-group-save-${groupId}`);
     if (saveBtn) {
@@ -1274,6 +1735,7 @@ function formatDaughterboardValue(key, value) {
 
 function resetDaughterboardSection(message) {
     exitRegistrationMode();
+    clearDaughterboardBaseline();
     const status = document.getElementById("daughterboard-data-status");
     if (!status) return;
 
@@ -1301,6 +1763,7 @@ function renderDaughterboardData(daughterboard, options = {}) {
     initDaughterboardGrid();
     currentDaughterboardSerial = daughterboard.serial_no;
     currentDaughterboardData = daughterboard;
+    snapshotDaughterboardBaseline(daughterboard);
 
     const decoded = daughterboard.serial_decoded || decodeSerialNo(daughterboard.serial_no);
     const batchLabel = decoded ? decoded.batch_no : DAUGHTERBOARD_PLACEHOLDER;
@@ -1323,6 +1786,8 @@ function renderDaughterboardData(daughterboard, options = {}) {
 }
 
 async function refreshDaughterboardSectionFromDnas() {
+    clearDaughterboardBaseline();
+
     const dnaA = document.getElementById("ku_side_a_dna")?.innerText;
     const dnaB = document.getElementById("ku_side_b_dna")?.innerText;
 
@@ -1341,6 +1806,11 @@ async function refreshDaughterboardSectionFromDnas() {
 
         if (data.status === "matched" && data.daughterboard) {
             renderDaughterboardData(data.daughterboard);
+            return;
+        }
+
+        if (data.status === "partial" && data.daughterboard) {
+            await handlePartialDaughterboardMatch(data);
             return;
         }
 
@@ -1364,6 +1834,72 @@ async function refreshDaughterboardSectionFromDnas() {
         console.error("Failed to load daughterboard data:", err);
         setDaughterboardSectionState("error", "Failed to load daughterboard data from database.");
         setDaughterboardPlaceholderValues();
+    }
+}
+
+async function handlePartialDaughterboardMatch(data) {
+    const daughterboard = data.daughterboard;
+    const missingSide = String(data.missing_side || "").toUpperCase();
+    const foundSide = String(data.found_side || "").toUpperCase();
+    const dnaField = missingSide === "A" ? "kintex_a_id" : "kintex_b_id";
+    const programmer = getProgrammerDnas();
+    const newDna = missingSide === "A" ? programmer.dna_a : programmer.dna_b;
+
+    renderDaughterboardData(daughterboard);
+    syncKuDbBoxesFromDaughterboard(daughterboard, { sides: [foundSide], force: true });
+    setKuSideDbInfo(missingSide, "Not in DB", "---");
+    styleKuDbBoxes();
+
+    setDaughterboardSectionState(
+        "warning",
+        data.message || `Only side ${foundSide} DNA is registered for serial ${daughterboard.serial_no}.`
+    );
+
+    const choice = await promptDnaChoice(daughterboard, {
+        title: `Only side ${foundSide} DNA is registered`,
+        message: (
+            `Serial ${daughterboard.serial_no} was loaded from the registered side ${foundSide} DNA. ` +
+            `Side ${missingSide} DNA is not registered. Update Kintex ${missingSide} with the newly read DNA?`
+        ),
+        sides: [missingSide],
+        keepLabel: "Keep database DNA",
+        replaceLabel: `Update Kintex ${missingSide} DNA`,
+    });
+
+    if (choice !== "replace" || !newDna) {
+        setDaughterboardSectionState(
+            "matched",
+            `Loaded serial ${daughterboard.serial_no} from side ${foundSide}. Kintex ${missingSide} DNA left unchanged.`
+        );
+        return;
+    }
+
+    try {
+        const res = await fetch(`api/daughterboard/${daughterboard.serial_no}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ fields: { [dnaField]: newDna } }),
+        });
+        const payload = await res.json();
+        if (!res.ok) {
+            throw new Error(payload.error || "update failed");
+        }
+
+        if (payload.daughterboard) {
+            renderDaughterboardData(payload.daughterboard);
+            syncKuDbBoxesFromDaughterboard(payload.daughterboard, { force: true });
+            setDaughterboardSectionState(
+                "matched",
+                `Updated Kintex ${missingSide} DNA for serial ${payload.daughterboard.serial_no}.`
+            );
+        }
+    } catch (err) {
+        console.error("Failed to update missing DNA:", err);
+        alert(`Failed to update Kintex ${missingSide} DNA: ${err.message}`);
+        setDaughterboardSectionState(
+            "error",
+            `Loaded serial ${daughterboard.serial_no}, but Kintex ${missingSide} DNA update failed.`
+        );
     }
 }
 
@@ -1455,9 +1991,20 @@ function resetStatusBoxesForProasicAction(action) {
     });
 }
 
+function isUnsetStatusText(text) {
+    const value = (text || "").trim();
+    return !value || value === "---";
+}
+
+function isFailedStatusText(text) {
+    const value = (text || "").trim().toUpperCase();
+    return value === "FAILED!" || value === "FAILED" || value === "FAILURE";
+}
+
 function checkLedStatus(type) {
     const sides = ["a", "b"];
     let failed = false;
+    let seen = 0;
 
     sides.forEach(side => {
         let statusId;
@@ -1465,21 +2012,25 @@ function checkLedStatus(type) {
         if (type === "ku_program") statusId = `ku_program_side_${side}_status`;
         else if (type === "ku_flash_program") statusId = `ku_flash_side_${side}_status`;
         else if (type === "ku_verify") statusId = `ku_verify_side_${side}_status`;
+        else if (type === "ku") statusId = `ku_side_${side}_dna`;
 
         else if (type === "proasic_program") statusId = `program_side_${side}_status`;
         else if (type === "proasic_verify") statusId = `verify_side_${side}_status`;
+        else if (type === "proasic") statusId = `proasic_side_${side}`;
 
         if (!statusId) return;
 
         const span = document.getElementById(statusId);
+        seen += 1;
 
-        if (span && (
-            span.innerText === "FAILED!" ||
-            span.innerText === "FAILED"
-        )) {
+        if (!span || isUnsetStatusText(span.innerText) || isFailedStatusText(span.innerText)) {
             failed = true;
         }
     });
+
+    if (seen < 2) {
+        failed = true;
+    }
 
     return failed ? "failure" : "success";
 }
@@ -1498,31 +2049,151 @@ function setButtonRunning(buttonId, isRunning) {
 // ----------------------------
 // Update DB info and check equality
 // ----------------------------
-function updateDbBoxes() {
+function setKuSideDbInfo(side, serialNo, batchNo = null) {
+    const sideKey = String(side).toLowerCase();
+    const serialEl = document.getElementById(`ku_side_${sideKey}_serial`);
+    const batchEl = document.getElementById(`ku_side_${sideKey}_batch`);
+    if (!serialEl || !batchEl) {
+        return;
+    }
+
+    if (serialNo === null || serialNo === undefined || serialNo === "") {
+        serialEl.innerText = "---";
+        batchEl.innerText = "---";
+        return;
+    }
+
+    const serialText = String(serialNo);
+    serialEl.innerText = serialText;
+
+    if (batchNo !== null && batchNo !== undefined) {
+        batchEl.innerText = String(batchNo);
+    } else if (serialText === "Not in DB" || serialText === "---") {
+        batchEl.innerText = "---";
+    } else {
+        batchEl.innerText = formatBatchNoFromSerial(serialText);
+    }
+}
+
+function applyDbBoxAnimationState(box, state) {
+    if (!box) {
+        return;
+    }
+
+    box.classList.remove("blink-red", "green-text");
+    // Force a reflow so CSS animations restart when the state changes.
+    void box.offsetWidth;
+
+    if (state === "ok") {
+        box.classList.add("green-text");
+    } else if (state === "error") {
+        box.classList.add("blink-red");
+    }
+}
+
+function styleKuDbBoxes() {
     const sideA = {
-        serial: document.getElementById("ku_side_a_serial").innerText,
-        batch: document.getElementById("ku_side_a_batch").innerText
+        serial: document.getElementById("ku_side_a_serial")?.innerText || "---",
+        batch: document.getElementById("ku_side_a_batch")?.innerText || "---",
     };
     const sideB = {
-        serial: document.getElementById("ku_side_b_serial").innerText,
-        batch: document.getElementById("ku_side_b_batch").innerText
+        serial: document.getElementById("ku_side_b_serial")?.innerText || "---",
+        batch: document.getElementById("ku_side_b_batch")?.innerText || "---",
     };
 
+    const isUnset = value => !value || value === "---";
+    const isMissing = value => isUnset(value) || value === "Not in DB";
     const equal = sideA.serial === sideB.serial && sideA.batch === sideB.batch;
+    const valid = equal && !isMissing(sideA.serial);
 
-    ["db_side_a_box", "db_side_b_box"].forEach(id => {
-        const box = document.getElementById(id);
-        if (!box) return;
-        box.classList.remove("blink-red", "green-text");
+    let stateA = "neutral";
+    let stateB = "neutral";
+
+    if (valid) {
+        stateA = "ok";
+        stateB = "ok";
+    } else if (!isUnset(sideA.serial) || !isUnset(sideB.serial)) {
+        // Any known mismatch / partial / unregistered state should blink.
+        stateA = isMissing(sideA.serial) || !equal ? "error" : "ok";
+        stateB = isMissing(sideB.serial) || !equal ? "error" : "ok";
+        // Keep both blinking when the pair is inconsistent (original behavior).
         if (!equal) {
-            box.classList.add("blink-red");
-        } else {
-            box.classList.add("green-text");
+            stateA = "error";
+            stateB = "error";
+        }
+    }
+
+    applyDbBoxAnimationState(document.getElementById("db_side_a_box"), stateA);
+    applyDbBoxAnimationState(document.getElementById("db_side_b_box"), stateB);
+
+    return { equal, valid, sideA, sideB, stateA, stateB };
+}
+
+function syncKuDbBoxesFromDaughterboard(daughterboard, options = {}) {
+    if (!daughterboard || !daughterboard.serial_no) {
+        return;
+    }
+
+    const serialNo = daughterboard.serial_no;
+    const batchNo = formatBatchNoFromSerial(serialNo);
+    const programmer = getProgrammerDnas();
+    const dbA = formatDnaForCompare(daughterboard.kintex_a_id);
+    const dbB = formatDnaForCompare(daughterboard.kintex_b_id);
+    const readA = formatDnaForCompare(programmer.dna_a);
+    const readB = formatDnaForCompare(programmer.dna_b);
+
+    const sides = options.sides
+        ? options.sides.map(side => String(side).toLowerCase())
+        : ["a", "b"];
+
+    sides.forEach(side => {
+        const readDna = side === "a" ? readA : readB;
+        const matchesDb = Boolean(readDna) && (readDna === dbA || readDna === dbB);
+        const force = options.force === true;
+        if (force || matchesDb) {
+            setKuSideDbInfo(side, serialNo, batchNo);
         }
     });
 
-    if (equal && sideA.serial !== "---" && sideA.serial !== "Not in DB") {
+    styleKuDbBoxes();
+}
+
+function updateDbBoxes() {
+    const { valid, sideA } = styleKuDbBoxes();
+
+    if (valid) {
         refreshDaughterboardSectionFromSerial(sideA.serial);
+    }
+}
+
+function setFpgaGroupButtonsDisabled(group, disabled, activeAction = null) {
+    document.querySelectorAll(`.fpga-op-btn[data-group="${group}"]`).forEach(btn => {
+        btn.disabled = Boolean(disabled);
+        btn.classList.toggle("op-busy", Boolean(disabled));
+
+        const isActiveButton = Boolean(
+            activeAction
+            && btn.getAttribute("onclick")
+            && btn.getAttribute("onclick").includes(`'${activeAction}'`)
+        );
+        btn.classList.toggle("btn-running", Boolean(disabled) && isActiveButton);
+    });
+}
+
+function getGroupConsole(group) {
+    return document.getElementById(group === "ku" ? "ku_console" : "proasic_console");
+}
+
+function setGroupConsoleRunning(group, running) {
+    const consoleDiv = getGroupConsole(group);
+    if (!consoleDiv) {
+        return;
+    }
+
+    consoleDiv.classList.toggle("is-running", Boolean(running));
+    const wrapper = consoleDiv.closest(".right-console");
+    if (wrapper) {
+        wrapper.classList.toggle("is-running", Boolean(running));
     }
 }
 
@@ -1560,6 +2231,8 @@ async function startAction(action, type) {
     }
     clearConsole(group);
 
+    setFpgaGroupButtonsDisabled(group, true, action);
+    setGroupConsoleRunning(group, true);
 
     const led = document.getElementById("led_" + action);
     resetLED(led);
@@ -1598,6 +2271,26 @@ async function startAction(action, type) {
 
     activeEventSources[group] = new EventSource("run/" + action);
     const eventSource = activeEventSources[group];
+    let groupOperationFinished = false;
+
+    const finishGroupOperation = (ledStatus) => {
+        if (groupOperationFinished) {
+            return;
+        }
+        groupOperationFinished = true;
+
+        finishLED(led, ledStatus);
+        eventSource.close();
+        activeEventSources[group] = null;
+
+        if (activeTimers[action]) {
+            clearInterval(activeTimers[action]);
+            delete activeTimers[action];
+        }
+
+        setFpgaGroupButtonsDisabled(group, false);
+        setGroupConsoleRunning(group, false);
+    };
 
     eventSource.onmessage = function(event) {
         const data = JSON.parse(event.data);
@@ -1659,11 +2352,7 @@ async function startAction(action, type) {
                 document.getElementById(`ku_side_${side}_batch`).innerText =
                     data.batch_no || formatBatchNoFromSerial(data.serial_no);
 
-                const box = document.getElementById(`db_side_${side}_box`);
-                if (box) {
-                    box.classList.remove("green-text");
-                    box.classList.add("blink-red");
-                }
+                styleKuDbBoxes();
             }
 
             // ----------------------
@@ -1673,18 +2362,19 @@ async function startAction(action, type) {
 
                 const serialBoxA = document.getElementById("ku_side_a_serial");
                 const serialBoxB = document.getElementById("ku_side_b_serial");
+                const batchBoxA = document.getElementById("ku_side_a_batch");
+                const batchBoxB = document.getElementById("ku_side_b_batch");
 
                 if (serialBoxA.innerText === "---") {
                     serialBoxA.innerText = "Not in DB";
+                    if (batchBoxA) batchBoxA.innerText = "---";
                 }
                 if (serialBoxB.innerText === "---") {
                     serialBoxB.innerText = "Not in DB";
+                    if (batchBoxB) batchBoxB.innerText = "---";
                 }
 
-                ["db_side_a_box","db_side_b_box"].forEach(id=>{
-                    const box = document.getElementById(id);
-                    if (box) box.classList.add("blink-red");
-                });
+                styleKuDbBoxes();
 
                 setDaughterboardSectionState("error", "One or both KU DNAs are not registered in the database.");
                 setDaughterboardPlaceholderValues();
@@ -1753,28 +2443,12 @@ async function startAction(action, type) {
 
         // Final status / LED
         if (data.status) {
-            const ledStatus = checkLedStatus(type);
-            finishLED(led, ledStatus);
-
-            eventSource.close();
-            activeEventSources[group] = null;
-
-            if (activeTimers[action]) {
-                clearInterval(activeTimers[action]);
-                delete activeTimers[action];
-            }
+            finishGroupOperation(checkLedStatus(type));
         }
     };
 
     eventSource.onerror = function() {
-        finishLED(led, "failure");
-        eventSource.close();
-        activeEventSources[group] = null;
-
-        if (activeTimers[action]) {
-            clearInterval(activeTimers[action]);
-            delete activeTimers[action];
-        }
+        finishGroupOperation(checkLedStatus(type));
     };
 }
 

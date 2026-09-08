@@ -97,9 +97,22 @@ KU_DNA_PATTERN = re.compile(
 )
 _PROASIC_PROGRAMMERS = "|".join(map(re.escape, PROASIC_PROG_TO_SIDE))
 PROASIC_RESULT_PATTERN = re.compile(
-    rf"programmer\s+'({_PROASIC_PROGRAMMERS})'.*?\s(PASSED|FAILED)",
+    r"programmer\s+'([^']+)'.*?\s(PASSED|FAILED)",
     re.I,
 )
+PROASIC_FSN_PATTERN = re.compile(
+    r"programmer\s+'([^']+)'.*?EXPORT FSN\[48\]\s*=\s*([0-9a-fA-F]+)",
+    re.I,
+)
+
+
+def _proasic_side_from_programmer(programmer):
+    text = (programmer or "").upper()
+    for name, side in PROASIC_PROG_TO_SIDE.items():
+        token = name.upper()
+        if token and (token in text or text in token):
+            return side
+    return None
 
 KU_ACTIONS = {
     "get_ku_properties": "get_ku_properties.tcl",
@@ -171,17 +184,24 @@ def _run_process_proasic(process, master_fd):
     for line in _read_pty_lines(process, master_fd):
         yield {"source": "proasic", "line": line}
 
+        fsn_match = PROASIC_FSN_PATTERN.search(line)
+        if fsn_match:
+            side = _proasic_side_from_programmer(fsn_match.group(1))
+            if side and side_status.get(side) != "failure":
+                side_status[side] = "success"
+
         match = PROASIC_RESULT_PATTERN.search(line)
         if not match:
             continue
 
         programmer = match.group(1)
         result = match.group(2).upper()
-        side = PROASIC_PROG_TO_SIDE.get(programmer)
+        side = _proasic_side_from_programmer(programmer)
         if side:
             side_status[side] = "success" if result == "PASSED" else "failure"
 
-    status = "failure" if "failure" in side_status.values() else "success"
+    both_ok = side_status.get("A") == "success" and side_status.get("B") == "success"
+    status = "success" if both_ok else "failure"
     yield {"source": "proasic", "status": status, "side_status": side_status}
 
 
@@ -403,7 +423,7 @@ def api_lookup_daughterboard():
         payload.get("dna_a"),
         payload.get("dna_b"),
     )
-    status_code = 200 if result["status"] == "matched" else 400
+    status_code = 200 if result["status"] in ("matched", "partial") else 400
     return jsonify(result), status_code
 
 

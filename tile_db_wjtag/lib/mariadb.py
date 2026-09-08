@@ -149,15 +149,43 @@ def lookup_daughterboard_pair(dna_a, dna_b):
 
     if not info_a or not info_b:
         both_unregistered = not info_a and not info_b
-        message = (
-            "Neither KU DNA is registered in the database."
-            if both_unregistered
-            else "One or both DNAs are not registered in the database."
-        )
+        if both_unregistered:
+            return {
+                "status": "not_found",
+                "message": "Neither KU DNA is registered in the database.",
+                "both_unregistered": True,
+                "side_a": info_a,
+                "side_b": info_b,
+            }
+
+        found_info = info_a or info_b
+        found_side = "A" if info_a else "B"
+        missing_side = "B" if info_a else "A"
+        row = get_daughterboard_by_serial(found_info["serial_no"])
+        if not row:
+            return {
+                "status": "not_found",
+                "message": (
+                    f"Only side {found_side} DNA is registered, but daughterboard "
+                    f"{found_info['serial_no']} was not found."
+                ),
+                "both_unregistered": False,
+                "side_a": info_a,
+                "side_b": info_b,
+            }
+
         return {
-            "status": "not_found",
-            "message": message,
-            "both_unregistered": both_unregistered,
+            "status": "partial",
+            "message": (
+                f"Only side {found_side} DNA is registered "
+                f"(serial {found_info['serial_no']}). "
+                f"Side {missing_side} DNA is not in the database."
+            ),
+            "both_unregistered": False,
+            "found_side": found_side,
+            "missing_side": missing_side,
+            "found_db_side": found_info["side"],
+            "daughterboard": serialize_daughterboard(row),
             "side_a": info_a,
             "side_b": info_b,
         }
@@ -213,7 +241,8 @@ _LOT_FIELDS = frozenset({
 })
 
 _EDITABLE_FIELDS = frozenset({
-    "db_status",
+    "kintex_a_id",
+    "kintex_b_id",
     "burn_in_start",
     "burn_in_stop",
     "burn_in_op",
@@ -235,6 +264,8 @@ _EDITABLE_FIELDS = frozenset({
     "b0",
     "b1",
 })
+
+_DNA_FIELDS = frozenset({"kintex_a_id", "kintex_b_id"})
 
 _INT_FIELDS = frozenset({"db_status", "e_test", "p_test"})
 _DATETIME_FIELDS = frozenset({"burn_in_start", "burn_in_stop"})
@@ -417,6 +448,17 @@ def update_daughterboard_fields(serial_no, fields):
 
     if not updates:
         return False, "no valid fields to update"
+
+    for dna_field in _DNA_FIELDS:
+        dna = updates.get(dna_field)
+        if not dna:
+            continue
+        existing = check_dna_in_db(dna)
+        if existing and int(existing["serial_no"]) != int(serial_no):
+            return (
+                False,
+                f"DNA {dna} is already registered to serial {existing['serial_no']}",
+            )
 
     conn = None
     cursor = None

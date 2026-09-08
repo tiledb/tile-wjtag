@@ -17,6 +17,18 @@
         <div class="loading-text">Programming FPGA…</div>
     </div>
 
+    <div id="dna-choice-modal" class="dna-choice-modal" hidden>
+        <div class="dna-choice-dialog" role="dialog" aria-modal="true" aria-labelledby="dna-choice-title">
+            <h3 id="dna-choice-title">DNA mismatch</h3>
+            <p id="dna-choice-message" class="dna-choice-message"></p>
+            <div id="dna-choice-diff" class="dna-choice-diff"></div>
+            <div class="dna-choice-actions">
+                <button type="button" id="dna-choice-keep" class="db-edit-btn">Keep database DNAs</button>
+                <button type="button" id="dna-choice-replace" class="db-save-btn">Use newly read DNAs</button>
+            </div>
+        </div>
+    </div>
+
 
     <div class="container">
 
@@ -96,7 +108,7 @@
 
 
                     <div class="row">
-                        <button onclick="startAction('get_ku_properties', 'ku')">
+                        <button type="button" class="fpga-op-btn" data-group="ku" onclick="startAction('get_ku_properties', 'ku')">
                             Get IDs for Xilinx KU
                         </button>
                         <div id="led_get_ku_properties" class="led"></div>
@@ -116,7 +128,7 @@
                     </div>
 
                     <div class="row">
-                        <button onclick="startAction('program_ku', 'ku_program')">
+                        <button type="button" class="fpga-op-btn" data-group="ku" onclick="startAction('program_ku', 'ku_program')">
                             Program KU FPGA
                         </button>
                         <div id="led_program_ku" class="led"></div>
@@ -138,7 +150,7 @@
 
 
                     <div class="row">
-                        <button onclick="startAction('program_ku_flash', 'ku_flash_program')">
+                        <button type="button" class="fpga-op-btn" data-group="ku" onclick="startAction('program_ku_flash', 'ku_flash_program')">
                             Program Xilinx KU Flash
                         </button>
                         <div id="led_program_ku_flash" class="led"></div>
@@ -160,7 +172,7 @@
 
 
                     <div class="row">
-                        <button onclick="startAction('verify_ku_flash', 'ku_verify')">
+                        <button type="button" class="fpga-op-btn" data-group="ku" onclick="startAction('verify_ku_flash', 'ku_verify')">
                             Verify Xilinx KU Flash
                         </button>
                         <div id="led_verify_ku_flash" class="led"></div>
@@ -203,7 +215,7 @@
                 <div class="left-panel">
 
                     <div class="row">
-                        <button onclick="startAction('get_proasic_info', 'proasic')">
+                        <button type="button" class="fpga-op-btn" data-group="proasic" onclick="startAction('get_proasic_info', 'proasic')">
                             Get FPGA Info
                         </button>
                         <div id="led_get_proasic_info" class="led"></div>
@@ -216,7 +228,7 @@
                     </div>
 
                     <div class="row">
-                        <button onclick="startAction('verify_proasic', 'proasic_verify')">Verify FPGA</button>
+                        <button type="button" class="fpga-op-btn" data-group="proasic" onclick="startAction('verify_proasic', 'proasic_verify')">Verify FPGA</button>
                         <div id="led_verify_proasic" class="led"></div>
                         <span id="timer_verify_proasic" class="elapsed-timer">00:00</span>
 
@@ -232,7 +244,7 @@
 
 
                     <div class="row">
-                        <button onclick="startAction('program_proasic', 'proasic_program')">Program FPGA</button>
+                        <button type="button" class="fpga-op-btn" data-group="proasic" onclick="startAction('program_proasic', 'proasic_program')">Program FPGA</button>
                         <div id="led_program_proasic" class="led"></div>
                         <span id="timer_program_proasic" class="elapsed-timer">00:00</span>
 
