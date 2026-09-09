@@ -201,6 +201,8 @@ document.addEventListener("DOMContentLoaded", () => {
     loadHwConfig();
     initEditIdleTracking();
     initDnaChoiceModal();
+    initKuFirmwareControls();
+    loadKuFirmwareSets();
 });
 
 
@@ -213,6 +215,9 @@ let activeEventSources = {
 };
 
 let activeTimers = {}; // keep track of running timers
+let kuFirmwareSets = [];
+let kuFirmwareActive = null;
+let kuFirmwareSelectSuppress = false;
 
 
 function resetDbBoxes() {
@@ -1159,8 +1164,10 @@ function updateEditModeUI() {
         globalBtn.textContent = globalEditUnlocked ? "Global: Unlocked" : "Global: Locked";
         globalBtn.classList.toggle("unlocked", globalEditUnlocked);
         globalBtn.classList.toggle("locked", !globalEditUnlocked);
-        globalBtn.disabled = !currentDaughterboardSerial && !registrationMode;
+        globalBtn.disabled = false;
     }
+
+    updateKuFirmwareControls();
 
     DAUGHTERBOARD_GROUPS.forEach(group => {
         const groupBtn = document.getElementById(`db-group-edit-${group.id}`);
@@ -1263,14 +1270,11 @@ function initDaughterboardEditControls() {
     const globalBtn = document.getElementById("db-global-edit-btn");
     if (globalBtn && !globalBtn.dataset.wired) {
         globalBtn.addEventListener("click", () => {
-            if (!currentDaughterboardSerial && !registrationMode) {
-                return;
-            }
-
             if (!globalEditUnlocked) {
                 const confirmed = confirm(
                     "Warning: unlock global edit mode?\n\n" +
-                    "Group edit toggles will be enabled. Database changes still require group edit + Save."
+                    "This enables KU firmware management and daughterboard group edit toggles.\n" +
+                    "Database changes still require group edit + Save."
                 );
                 if (!confirmed) {
                     return;
@@ -2164,6 +2168,328 @@ function updateDbBoxes() {
     if (valid) {
         refreshDaughterboardSectionFromSerial(sideA.serial);
     }
+}
+
+function updateKuFirmwareControls() {
+    const unlocked = globalEditUnlocked === true;
+    const panel = document.getElementById("ku-fw-panel");
+    const select = document.getElementById("ku-fw-set-select");
+    const uploadBtn = document.getElementById("ku-fw-upload-btn");
+    const downloadBtn = document.getElementById("ku-fw-download-btn");
+
+    if (panel) {
+        panel.classList.toggle("is-locked", !unlocked);
+    }
+    if (select) {
+        select.disabled = !unlocked || kuFirmwareSets.length === 0;
+    }
+    if (uploadBtn) {
+        uploadBtn.disabled = !unlocked;
+    }
+    if (downloadBtn) {
+        downloadBtn.disabled = !unlocked || !kuFirmwareActive;
+    }
+}
+
+function renderKuFirmwareSelect(sets, active) {
+    const select = document.getElementById("ku-fw-set-select");
+    if (!select) {
+        return;
+    }
+
+    kuFirmwareSelectSuppress = true;
+    select.innerHTML = "";
+
+    if (!sets.length) {
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = "No firmware sets found";
+        select.appendChild(option);
+    } else {
+        sets.forEach(setName => {
+            const option = document.createElement("option");
+            option.value = setName;
+            option.textContent = setName;
+            select.appendChild(option);
+        });
+        if (active && sets.includes(active)) {
+            select.value = active;
+        }
+    }
+
+    kuFirmwareSelectSuppress = false;
+}
+
+async function loadKuFirmwareSets() {
+    try {
+        const res = await fetch("api/ku/firmware");
+        const data = await res.json();
+        if (!res.ok) {
+            throw new Error(data.error || "failed to load firmware sets");
+        }
+        kuFirmwareSets = data.sets || [];
+        kuFirmwareActive = data.active || null;
+        renderKuFirmwareSelect(kuFirmwareSets, kuFirmwareActive);
+        updateKuFirmwareControls();
+    } catch (err) {
+        console.error("Failed to load KU firmware sets:", err);
+    }
+}
+
+function getUploadStemAndExts(fileList) {
+    const files = Array.from(fileList || []);
+    const byExt = {};
+    const stems = new Set();
+
+    files.forEach(file => {
+        const match = file.name.match(/^(.+)\.(bit|bin|ltx)$/i);
+        if (!match) {
+            return;
+        }
+        const stem = match[1];
+        const ext = match[2].toLowerCase();
+        byExt[ext] = file;
+        stems.add(stem);
+    });
+
+    return { byExt, stems, files };
+}
+
+function updateKuFirmwareUploadPreview() {
+    const preview = document.getElementById("ku-fw-upload-preview");
+    const errorEl = document.getElementById("ku-fw-upload-error");
+    const filesInput = document.getElementById("ku-fw-upload-files");
+    const tagInput = document.getElementById("ku-fw-upload-tag");
+    if (!preview) {
+        return;
+    }
+
+    const tag = (tagInput?.value || "").trim();
+    const { byExt, stems } = getUploadStemAndExts(filesInput?.files);
+    const required = ["bit", "bin", "ltx"];
+    const missing = required.filter(ext => !byExt[ext]);
+
+    if (errorEl) {
+        errorEl.hidden = true;
+        errorEl.textContent = "";
+    }
+
+    if (!filesInput?.files?.length) {
+        preview.textContent = "Result: ---";
+        return;
+    }
+    if (missing.length || stems.size !== 1) {
+        preview.textContent = "Result: select matching .bit .bin .ltx files";
+        return;
+    }
+
+    const stem = Array.from(stems)[0];
+    if (!tag) {
+        preview.textContent = `Result: ${stem}_<tag>.{bit,bin,ltx}`;
+        return;
+    }
+    preview.textContent = `Result: ${stem}_${tag}.{bit,bin,ltx}`;
+}
+
+function openKuFirmwareUploadModal() {
+    if (!globalEditUnlocked) {
+        return;
+    }
+    const modal = document.getElementById("ku-fw-upload-modal");
+    const filesInput = document.getElementById("ku-fw-upload-files");
+    const tagInput = document.getElementById("ku-fw-upload-tag");
+    const errorEl = document.getElementById("ku-fw-upload-error");
+    if (filesInput) filesInput.value = "";
+    if (tagInput) tagInput.value = "";
+    if (errorEl) {
+        errorEl.hidden = true;
+        errorEl.textContent = "";
+    }
+    updateKuFirmwareUploadPreview();
+    if (modal) modal.hidden = false;
+}
+
+function closeKuFirmwareUploadModal() {
+    const modal = document.getElementById("ku-fw-upload-modal");
+    if (modal) modal.hidden = true;
+}
+
+async function submitKuFirmwareUpload() {
+    if (!globalEditUnlocked) {
+        return;
+    }
+
+    const filesInput = document.getElementById("ku-fw-upload-files");
+    const tagInput = document.getElementById("ku-fw-upload-tag");
+    const errorEl = document.getElementById("ku-fw-upload-error");
+    const confirmBtn = document.getElementById("ku-fw-upload-confirm");
+    const tag = (tagInput?.value || "").trim();
+    const { byExt, stems } = getUploadStemAndExts(filesInput?.files);
+
+    const showError = (message) => {
+        if (errorEl) {
+            errorEl.hidden = false;
+            errorEl.textContent = message;
+        } else {
+            alert(message);
+        }
+    };
+
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(tag)) {
+        showError("Enter a valid tag (letters, numbers, . _ -).");
+        return;
+    }
+    if (stems.size !== 1 || !byExt.bit || !byExt.bin || !byExt.ltx) {
+        showError("Select exactly one .bit, one .bin, and one .ltx with the same base name.");
+        return;
+    }
+
+    const form = new FormData();
+    form.append("tag", tag);
+    form.append("files", byExt.bit);
+    form.append("files", byExt.bin);
+    form.append("files", byExt.ltx);
+
+    if (confirmBtn) {
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = "Uploading...";
+    }
+
+    try {
+        const res = await fetch("api/ku/firmware/upload", {
+            method: "POST",
+            body: form,
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            throw new Error(data.error || "upload failed");
+        }
+
+        kuFirmwareSets = data.sets || [];
+        kuFirmwareActive = data.active || kuFirmwareActive;
+        renderKuFirmwareSelect(kuFirmwareSets, kuFirmwareActive);
+        updateKuFirmwareControls();
+        closeKuFirmwareUploadModal();
+
+        const activate = confirm(
+            `Uploaded firmware set "${data.set}".\n\nMake it the active set now?`
+        );
+        if (activate) {
+            await selectKuFirmwareSet(data.set);
+        }
+    } catch (err) {
+        console.error("Firmware upload failed:", err);
+        showError(err.message || "upload failed");
+    } finally {
+        if (confirmBtn) {
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = "Upload";
+        }
+    }
+}
+
+async function selectKuFirmwareSet(setName) {
+    if (!globalEditUnlocked || !setName) {
+        return;
+    }
+
+    try {
+        const res = await fetch("api/ku/firmware/select", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ set: setName }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            throw new Error(data.error || "select failed");
+        }
+
+        kuFirmwareSets = data.sets || kuFirmwareSets;
+        kuFirmwareActive = data.active || setName;
+        if (data.hw_config) {
+            hwConfig = data.hw_config;
+        }
+        renderKuFirmwareSelect(kuFirmwareSets, kuFirmwareActive);
+        updateKuFirmwareControls();
+    } catch (err) {
+        console.error("Failed to select firmware set:", err);
+        alert(`Failed to select firmware set: ${err.message}`);
+        renderKuFirmwareSelect(kuFirmwareSets, kuFirmwareActive);
+    }
+}
+
+function downloadCurrentKuFirmware() {
+    if (!globalEditUnlocked || !kuFirmwareActive) {
+        return;
+    }
+    window.location.href = "api/ku/firmware/download";
+}
+
+function initKuFirmwareControls() {
+    const uploadBtn = document.getElementById("ku-fw-upload-btn");
+    const downloadBtn = document.getElementById("ku-fw-download-btn");
+    const select = document.getElementById("ku-fw-set-select");
+    const modal = document.getElementById("ku-fw-upload-modal");
+    const cancelBtn = document.getElementById("ku-fw-upload-cancel");
+    const confirmBtn = document.getElementById("ku-fw-upload-confirm");
+    const filesInput = document.getElementById("ku-fw-upload-files");
+    const tagInput = document.getElementById("ku-fw-upload-tag");
+
+    if (uploadBtn && !uploadBtn.dataset.wired) {
+        uploadBtn.addEventListener("click", openKuFirmwareUploadModal);
+        uploadBtn.dataset.wired = "true";
+    }
+    if (downloadBtn && !downloadBtn.dataset.wired) {
+        downloadBtn.addEventListener("click", downloadCurrentKuFirmware);
+        downloadBtn.dataset.wired = "true";
+    }
+    if (select && !select.dataset.wired) {
+        select.addEventListener("change", async () => {
+            if (kuFirmwareSelectSuppress || !globalEditUnlocked) {
+                return;
+            }
+            const next = select.value;
+            if (!next || next === kuFirmwareActive) {
+                return;
+            }
+            const confirmed = confirm(
+                `Switch active KU firmware to "${next}"?\n\n` +
+                "Programming/verify will use this set."
+            );
+            if (!confirmed) {
+                renderKuFirmwareSelect(kuFirmwareSets, kuFirmwareActive);
+                return;
+            }
+            await selectKuFirmwareSet(next);
+        });
+        select.dataset.wired = "true";
+    }
+    if (cancelBtn && !cancelBtn.dataset.wired) {
+        cancelBtn.addEventListener("click", closeKuFirmwareUploadModal);
+        cancelBtn.dataset.wired = "true";
+    }
+    if (confirmBtn && !confirmBtn.dataset.wired) {
+        confirmBtn.addEventListener("click", submitKuFirmwareUpload);
+        confirmBtn.dataset.wired = "true";
+    }
+    if (filesInput && !filesInput.dataset.wired) {
+        filesInput.addEventListener("change", updateKuFirmwareUploadPreview);
+        filesInput.dataset.wired = "true";
+    }
+    if (tagInput && !tagInput.dataset.wired) {
+        tagInput.addEventListener("input", updateKuFirmwareUploadPreview);
+        tagInput.dataset.wired = "true";
+    }
+    if (modal && !modal.dataset.wired) {
+        modal.addEventListener("click", event => {
+            if (event.target === modal) {
+                closeKuFirmwareUploadModal();
+            }
+        });
+        modal.dataset.wired = "true";
+    }
+
+    updateKuFirmwareControls();
 }
 
 function setFpgaGroupButtonsDisabled(group, disabled, activeAction = null) {

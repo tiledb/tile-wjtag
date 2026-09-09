@@ -34,6 +34,7 @@ if {[dict exists $data $hostname]} {
             target    [dict get $info target] \
             id        [dict get $info serial] \
             device    [dict get $info device] \
+            bitfile   [dict get $info bitfile] \
             binfile   [dict get $info binfile] \
             ltxfile   [dict get $info ltxfile] \
         ]
@@ -41,6 +42,15 @@ if {[dict exists $data $hostname]} {
 } else {
     puts "Error: No configuration found for host $hostname"
     exit 1
+}
+
+puts "=== Selected KU firmware ==="
+foreach p $programmers {
+    array set fw $p
+    puts "($fw(id)) bit: $fw(bitfile)"
+    puts "($fw(id)) bin: $fw(binfile)"
+    puts "($fw(id)) ltx: $fw(ltxfile)"
+    array unset fw
 }
 # ==============================
 # Hardware Manager Init

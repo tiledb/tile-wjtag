@@ -10,7 +10,7 @@ from datetime import datetime
 
 import psutil
 import requests
-from flask import Flask, Response, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request, send_file
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from lib.ha import HomeAssistantClient
@@ -18,6 +18,17 @@ from lib.hw import (
     detect_digilent_programmers,
     detect_flashpro_programmers,
     detect_programmers,
+)
+from lib.ku_fw import (
+    apply_firmware_set,
+    build_firmware_zip,
+    current_set_name,
+    ku_bin_dir,
+    list_firmware_sets,
+    persist_hw_configs,
+    sanitize_tag,
+    save_firmware_set,
+    validate_upload_files,
 )
 from lib.mariadb import (
     check_dna_in_db,
@@ -409,6 +420,99 @@ def get_hostname():
 @app.route("/api/hw_config", methods=["GET"])
 def get_hw_config():
     return jsonify(HW_CONFIG)
+
+
+@app.route("/api/ku/firmware", methods=["GET"])
+def api_list_ku_firmware():
+    bin_dir = ku_bin_dir(RESOURCES_FOLDER)
+    active = current_set_name(HW_CONFIG)
+    sets = list_firmware_sets(bin_dir)
+    return jsonify({
+        "sets": sets,
+        "active": active,
+        "active_present": bool(active and active in sets),
+    })
+
+
+@app.route("/api/ku/firmware/upload", methods=["POST"])
+def api_upload_ku_firmware():
+    tag = sanitize_tag(request.form.get("tag"))
+    if not tag:
+        return jsonify({
+            "error": "tag is required (letters, numbers, . _ - ; max 64 chars)",
+        }), 400
+
+    uploaded = request.files.getlist("files") or []
+    if not uploaded:
+        # also accept named fields
+        for key in ("bit", "bin", "ltx", "file", "files[]"):
+            value = request.files.get(key)
+            if value is not None:
+                uploaded.append(value)
+
+    pairs = [(f.filename, f) for f in uploaded if f and f.filename]
+    stem, result = validate_upload_files(pairs)
+    if stem is None:
+        return jsonify({"error": result}), 400
+
+    set_name, error = save_firmware_set(
+        ku_bin_dir(RESOURCES_FOLDER),
+        stem,
+        tag,
+        result,
+    )
+    if error:
+        return jsonify({"error": error}), 400
+
+    return jsonify({
+        "status": "ok",
+        "set": set_name,
+        "sets": list_firmware_sets(ku_bin_dir(RESOURCES_FOLDER)),
+        "active": current_set_name(HW_CONFIG),
+    }), 201
+
+
+@app.route("/api/ku/firmware/download", methods=["GET"])
+def api_download_ku_firmware():
+    active = current_set_name(HW_CONFIG)
+    if not active:
+        return jsonify({"error": "no active firmware set configured"}), 404
+
+    buffer, error = build_firmware_zip(ku_bin_dir(RESOURCES_FOLDER), active)
+    if error:
+        return jsonify({"error": error}), 404
+
+    return send_file(
+        buffer,
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name=f"{active}.zip",
+    )
+
+
+@app.route("/api/ku/firmware/select", methods=["POST"])
+def api_select_ku_firmware():
+    payload = request.get_json(silent=True) or {}
+    set_name = (payload.get("set") or "").strip()
+    if not set_name:
+        return jsonify({"error": "set name is required"}), 400
+
+    ok, error = apply_firmware_set(HW_CONFIG, ku_bin_dir(RESOURCES_FOLDER), set_name)
+    if not ok:
+        return jsonify({"error": error}), 400
+
+    ALL_HW_CONFIGS[HOSTNAME] = HW_CONFIG
+    try:
+        persist_hw_configs(HW_CONFIG_PATH, ALL_HW_CONFIGS)
+    except Exception as exc:
+        return jsonify({"error": f"failed to save hw_config: {exc}"}), 500
+
+    return jsonify({
+        "status": "ok",
+        "active": set_name,
+        "sets": list_firmware_sets(ku_bin_dir(RESOURCES_FOLDER)),
+        "hw_config": HW_CONFIG,
+    })
 
 
 @app.route("/api/component_lots", methods=["GET"])

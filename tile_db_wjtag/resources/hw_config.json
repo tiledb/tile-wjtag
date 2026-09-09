@@ -30,8 +30,12 @@
     },
     "proasic": {
       "sides": {
-        "a": { "programmer": "07712" },
-        "b": { "programmer": "07573" }
+        "a": {
+          "programmer": "07712"
+        },
+        "b": {
+          "programmer": "07573"
+        }
       }
     }
   },
@@ -66,8 +70,12 @@
     },
     "proasic": {
       "sides": {
-        "a": { "programmer": "0059F8LM" },
-        "b": { "programmer": "0059F4B3" }
+        "a": {
+          "programmer": "0059F8LM"
+        },
+        "b": {
+          "programmer": "0059F4B3"
+        }
       }
     }
   }

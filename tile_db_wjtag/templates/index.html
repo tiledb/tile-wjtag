@@ -29,6 +29,38 @@
         </div>
     </div>
 
+    <div id="ku-fw-upload-modal" class="dna-choice-modal" hidden>
+        <div class="dna-choice-dialog" role="dialog" aria-modal="true" aria-labelledby="ku-fw-upload-title">
+            <h3 id="ku-fw-upload-title">Upload KU firmware</h3>
+            <p class="dna-choice-message">
+                Select the three files with the same base name
+                (<code>.bit</code>, <code>.bin</code>, <code>.ltx</code>) and enter a tag
+                that will be appended before the extension.
+            </p>
+            <label class="ku-fw-modal-label" for="ku-fw-upload-files">Firmware files</label>
+            <input
+                id="ku-fw-upload-files"
+                type="file"
+                accept=".bit,.bin,.ltx"
+                multiple
+            >
+            <label class="ku-fw-modal-label" for="ku-fw-upload-tag">Tag</label>
+            <input
+                id="ku-fw-upload-tag"
+                type="text"
+                maxlength="64"
+                placeholder="e.g. 20260910_preprod"
+                autocomplete="off"
+            >
+            <p id="ku-fw-upload-preview" class="ku-fw-upload-preview">Result: ---</p>
+            <p id="ku-fw-upload-error" class="ku-fw-upload-error" hidden></p>
+            <div class="dna-choice-actions">
+                <button type="button" id="ku-fw-upload-cancel" class="db-edit-btn">Cancel</button>
+                <button type="button" id="ku-fw-upload-confirm" class="db-save-btn">Upload</button>
+            </div>
+        </div>
+    </div>
+
 
     <div class="container">
 
@@ -100,6 +132,14 @@
 
                 <div id="db_side_b_box" class="db-box">DBSerial: <span id="ku_side_b_serial">---</span>
                     DBBatch: <span id="ku_side_b_batch">---</span> </div>
+
+                <div id="ku-fw-panel" class="ku-fw-controls is-locked">
+                    <button type="button" id="ku-fw-download-btn" class="db-edit-btn" disabled>Download current FW</button>
+                    <button type="button" id="ku-fw-upload-btn" class="db-save-btn" disabled>Upload FW files</button>
+                    <select id="ku-fw-set-select" class="ku-fw-select" disabled title="Active firmware set">
+                        <option value="">Loading...</option>
+                    </select>
+                </div>
             </h2>
 
 
@@ -191,6 +231,7 @@
                     </div>
 
                 </div>
+
                 <div class="right-console">
                     <div id="ku_console" class="console"></div>
                 </div>
