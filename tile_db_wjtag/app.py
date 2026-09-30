@@ -130,6 +130,8 @@ KU_ACTIONS = {
     "program_ku": "program_ku.tcl",
     "program_ku_flash": "program_ku_flash.tcl",
     "verify_ku_flash": "verify_ku_flash.tcl",
+    "erase_ku_flash": "erase_ku_flash.tcl",
+    "blank_check_ku_flash": "blank_check_ku_flash.tcl",
 }
 
 PROASIC_ACTIONS = {

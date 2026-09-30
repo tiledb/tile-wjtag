@@ -1931,8 +1931,9 @@ function resetStatusBoxesForKUAction(action) {
         "get_ku_properties": ["ku_side_a_dna", "ku_side_b_dna"],
         "program_ku": ["ku_program_side_a_status", "ku_program_side_b_status", "ku_program_side_a_id", "ku_program_side_b_id"],
         "program_ku_flash": ["ku_flash_side_a_status", "ku_flash_side_b_status", "ku_flash_side_a_id", "ku_flash_side_b_id"],
-        "verify_ku_flash": ["ku_verify_side_a_status", "ku_verify_side_b_status", "ku_verify_side_a_id", "ku_verify_side_b_id"]
-        
+        "verify_ku_flash": ["ku_verify_side_a_status", "ku_verify_side_b_status", "ku_verify_side_a_id", "ku_verify_side_b_id"],
+        "erase_ku_flash": ["ku_erase_side_a_status", "ku_erase_side_b_status", "ku_erase_side_a_id", "ku_erase_side_b_id"],
+        "blank_check_ku_flash": ["ku_blank_side_a_status", "ku_blank_side_b_status", "ku_blank_side_a_id", "ku_blank_side_b_id"]
     };
 
     // Get all KU status boxes
@@ -1940,7 +1941,9 @@ function resetStatusBoxesForKUAction(action) {
         "ku_side_a_dna", "ku_side_b_dna",
         "ku_program_side_a_status", "ku_program_side_b_status", "ku_program_side_a_id", "ku_program_side_b_id",
         "ku_flash_side_a_status", "ku_flash_side_b_status", "ku_flash_side_a_id", "ku_flash_side_b_id",
-        "ku_verify_side_a_status", "ku_verify_side_b_status", "ku_verify_side_a_id", "ku_verify_side_b_id"
+        "ku_verify_side_a_status", "ku_verify_side_b_status", "ku_verify_side_a_id", "ku_verify_side_b_id",
+        "ku_erase_side_a_status", "ku_erase_side_b_status", "ku_erase_side_a_id", "ku_erase_side_b_id",
+        "ku_blank_side_a_status", "ku_blank_side_b_status", "ku_blank_side_a_id", "ku_blank_side_b_id"
     ];
     console.log(action);
 
@@ -2016,6 +2019,8 @@ function checkLedStatus(type) {
         if (type === "ku_program") statusId = `ku_program_side_${side}_status`;
         else if (type === "ku_flash_program") statusId = `ku_flash_side_${side}_status`;
         else if (type === "ku_verify") statusId = `ku_verify_side_${side}_status`;
+        else if (type === "ku_flash_erase") statusId = `ku_erase_side_${side}_status`;
+        else if (type === "ku_flash_blank") statusId = `ku_blank_side_${side}_status`;
         else if (type === "ku") statusId = `ku_side_${side}_dna`;
 
         else if (type === "proasic_program") statusId = `program_side_${side}_status`;
@@ -2641,6 +2646,10 @@ async function startAction(action, type) {
                 parseKuProgram(data.line);
             } else if (type === "ku_flash_program") {
                 parseKuFlashProgram(data.line);
+            } else if (type === "ku_flash_erase") {
+                parseKuFlashErase(data.line);
+            } else if (type === "ku_flash_blank") {
+                parseKuFlashBlank(data.line);
             }
         }
 
@@ -2746,8 +2755,10 @@ async function startAction(action, type) {
                     };
                     const side = map[sideKey] || sideKey;
 
-                    const statusId = type.includes("program") ? `ku_program_side_${side}_status` :
-                                    type.includes("flash")   ? `ku_flash_side_${side}_status` :
+                    const statusId = type === "ku_program" ? `ku_program_side_${side}_status` :
+                                    type === "ku_flash_program" ? `ku_flash_side_${side}_status` :
+                                    type === "ku_flash_erase" ? `ku_erase_side_${side}_status` :
+                                    type === "ku_flash_blank" ? `ku_blank_side_${side}_status` :
                                     `ku_verify_side_${side}_status`;
                     const dnaId = `ku_side_${side}_dna`;
 
@@ -3038,6 +3049,78 @@ function updateKuFlashStatus(serial, passed) {
     if (serial === hwConfig.ku.sides.b.serial) {
         document.getElementById("ku_flash_side_b_status").innerText = statusText;
         document.getElementById("ku_flash_side_b_status").className = className;
+    }
+}
+
+// ----------------------------
+// KU: parse flash erase lines
+// ----------------------------
+function parseKuFlashErase(line) {
+    const dnaRegex = new RegExp(`\\((${hwConfig.ku.sides.a.serial}|${hwConfig.ku.sides.b.serial})\\).*FUSE_DNA\\s*=\\s*([0-9A-F]+)`, "i");
+    const resultRegex = new RegExp(`\\((${hwConfig.ku.sides.a.serial}|${hwConfig.ku.sides.b.serial})\\)\\s+Tile Operation\\s+(Success|Failure)!`, "i");
+    let match;
+
+    if ((match = line.match(dnaRegex))) {
+        const serial = match[1];
+        const dna = match[2];
+        if (serial === hwConfig.ku.sides.a.serial) document.getElementById("ku_erase_side_a_id").innerText = dna;
+        if (serial === hwConfig.ku.sides.b.serial) document.getElementById("ku_erase_side_b_id").innerText = dna;
+    }
+
+    if ((match = line.match(resultRegex))) {
+        const serial = match[1];
+        const passed = match[2].toLowerCase() === "success";
+        updateKuEraseStatus(serial, passed);
+    }
+}
+
+function updateKuEraseStatus(serial, passed) {
+    const statusText = passed ? "Erased" : "FAILED!";
+    const className = passed ? "passed" : "failed";
+
+    if (serial === hwConfig.ku.sides.a.serial) {
+        document.getElementById("ku_erase_side_a_status").innerText = statusText;
+        document.getElementById("ku_erase_side_a_status").className = className;
+    }
+    if (serial === hwConfig.ku.sides.b.serial) {
+        document.getElementById("ku_erase_side_b_status").innerText = statusText;
+        document.getElementById("ku_erase_side_b_status").className = className;
+    }
+}
+
+// ----------------------------
+// KU: parse flash blank-check lines
+// ----------------------------
+function parseKuFlashBlank(line) {
+    const dnaRegex = new RegExp(`\\((${hwConfig.ku.sides.a.serial}|${hwConfig.ku.sides.b.serial})\\).*FUSE_DNA\\s*=\\s*([0-9A-F]+)`, "i");
+    const resultRegex = new RegExp(`\\((${hwConfig.ku.sides.a.serial}|${hwConfig.ku.sides.b.serial})\\)\\s+Tile Operation\\s+(Success|Failure)!`, "i");
+    let match;
+
+    if ((match = line.match(dnaRegex))) {
+        const serial = match[1];
+        const dna = match[2];
+        if (serial === hwConfig.ku.sides.a.serial) document.getElementById("ku_blank_side_a_id").innerText = dna;
+        if (serial === hwConfig.ku.sides.b.serial) document.getElementById("ku_blank_side_b_id").innerText = dna;
+    }
+
+    if ((match = line.match(resultRegex))) {
+        const serial = match[1];
+        const passed = match[2].toLowerCase() === "success";
+        updateKuBlankStatus(serial, passed);
+    }
+}
+
+function updateKuBlankStatus(serial, passed) {
+    const statusText = passed ? "Blank" : "FAILED!";
+    const className = passed ? "passed" : "failed";
+
+    if (serial === hwConfig.ku.sides.a.serial) {
+        document.getElementById("ku_blank_side_a_status").innerText = statusText;
+        document.getElementById("ku_blank_side_a_status").className = className;
+    }
+    if (serial === hwConfig.ku.sides.b.serial) {
+        document.getElementById("ku_blank_side_b_status").innerText = statusText;
+        document.getElementById("ku_blank_side_b_status").className = className;
     }
 }
 

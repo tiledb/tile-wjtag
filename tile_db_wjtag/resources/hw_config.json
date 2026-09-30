@@ -13,18 +13,18 @@
           "hw_server": "localhost:3121",
           "target": "xilinx_tcf/Digilent/",
           "device": "xcku035",
-          "bitfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db6v5_top.bit",
-          "binfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db6v5_top.bin",
-          "ltxfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db6v5_top.ltx"
+          "bitfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db5v5_top_allworkingnoila_AllWorkingNoILAProdTest.bit",
+          "binfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db5v5_top_allworkingnoila_AllWorkingNoILAProdTest.bin",
+          "ltxfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db5v5_top_allworkingnoila_AllWorkingNoILAProdTest.ltx"
         },
         "b": {
           "serial": "210249A1449F",
           "hw_server": "localhost:3121",
           "target": "xilinx_tcf/Digilent/",
           "device": "xcku035",
-          "bitfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db6v5_top.bit",
-          "binfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db6v5_top.bin",
-          "ltxfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db6v5_top.ltx"
+          "bitfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db5v5_top_allworkingnoila_AllWorkingNoILAProdTest.bit",
+          "binfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db5v5_top_allworkingnoila_AllWorkingNoILAProdTest.bin",
+          "ltxfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db5v5_top_allworkingnoila_AllWorkingNoILAProdTest.ltx"
         }
       }
     },

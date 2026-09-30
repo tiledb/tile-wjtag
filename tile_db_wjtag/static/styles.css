@@ -340,6 +340,8 @@ button:active {
 .ku-program-box,
 .ku-flash-program-box,
 .ku-verify-box,
+.ku-erase-box,
+.ku-blank-box,
 .proasic-program-box,
 .proasic-verify-box {
     font-size: 0.95em;

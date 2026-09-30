@@ -230,6 +230,50 @@
                         </div>
                     </div>
 
+
+                    <div class="row">
+                        <button type="button" class="fpga-op-btn" data-group="ku" onclick="startAction('erase_ku_flash', 'ku_flash_erase')">
+                            Erase KU Flash Memory
+                        </button>
+                        <div id="led_erase_ku_flash" class="led"></div>
+                        <span id="timer_erase_ku_flash" class="elapsed-timer">00:00</span>
+
+                        <div class="ku-erase-box">
+                            <div>
+                                Side A:
+                                <span id="ku_erase_side_a_status">---</span>
+                                (<span id="ku_erase_side_a_id">---</span>)
+                            </div>
+                            <div>
+                                Side B:
+                                <span id="ku_erase_side_b_status">---</span>
+                                (<span id="ku_erase_side_b_id">---</span>)
+                            </div>
+                        </div>
+                    </div>
+
+
+                    <div class="row">
+                        <button type="button" class="fpga-op-btn" data-group="ku" onclick="startAction('blank_check_ku_flash', 'ku_flash_blank')">
+                            Verify KU Flash Blank
+                        </button>
+                        <div id="led_blank_check_ku_flash" class="led"></div>
+                        <span id="timer_blank_check_ku_flash" class="elapsed-timer">00:00</span>
+
+                        <div class="ku-blank-box">
+                            <div>
+                                Side A:
+                                <span id="ku_blank_side_a_status">---</span>
+                                (<span id="ku_blank_side_a_id">---</span>)
+                            </div>
+                            <div>
+                                Side B:
+                                <span id="ku_blank_side_b_status">---</span>
+                                (<span id="ku_blank_side_b_id">---</span>)
+                            </div>
+                        </div>
+                    </div>
+
                 </div>
 
                 <div class="right-console">
