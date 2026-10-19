@@ -41,13 +41,13 @@ async function updateDetectedHW() {
         const detectedKU = hwDetected?.digilent?.map(dev => dev.serial) || [];
         
 
-        if (!detectedKU.includes(hwConfig.ku.sides.a.serial)) {
+        if (!detectedKU.includes(getKuSideSerial("a"))) {
             kuABox.classList.add("blink-red");
         } else {
             kuABox.classList.remove("blink-red");
         }
 
-        if (!detectedKU.includes(hwConfig.ku.sides.b.serial)) {
+        if (!detectedKU.includes(getKuSideSerial("b"))) {
             kuBBox.classList.add("blink-red");
         } else {
             kuBBox.classList.remove("blink-red");
@@ -92,11 +92,8 @@ function initializeUI() {
     // Build dynamic maps (VERY IMPORTANT)
     // ----------------------------------
 
-    // KU serial -> side map
-    window.kuSerialToSide = {};
-    Object.entries(hwConfig.ku.sides).forEach(([side, data]) => {
-        kuSerialToSide[data.serial] = side;
-    });
+    // KU serial -> side map (honors session cable overrides)
+    rebuildKuRuntimeMaps();
 
     // ProASIC programmer -> side map
     window.proasicProgToSide = {};
@@ -106,25 +103,6 @@ function initializeUI() {
 
     console.log("KU serial map:", kuSerialToSide);
     console.log("ProASIC programmer map:", proasicProgToSide);
-
-    // ----------------------------------
-    // Prebuild reusable regex strings
-    // ----------------------------------
-
-    const kuSerials = Object.values(hwConfig.ku.sides)
-        .map(s => s.serial)
-        .join("|");
-
-    window.kuDnaRegex = new RegExp(
-        `\\((${kuSerials})\\).*FUSE_DNA\\s*=\\s*([0-9A-F]+)`,
-        "i"
-    );
-
-    window.kuResultRegex = new RegExp(
-        `\\((${kuSerials})\\)\\s+Tile Operation\\s+(Success|Failure)!`,
-        "i"
-    );
-
     console.log("KU regex ready.");
 
     // ----------------------------------
@@ -152,19 +130,19 @@ function initializeUI() {
     const kuABox = document.getElementById("ku_side_a_prog");
     const kuBBox = document.getElementById("ku_side_b_prog");
 
-    kuABox.innerText = `A: ${hwConfig.ku.sides.a.serial}`;
-    kuBBox.innerText = `B: ${hwConfig.ku.sides.b.serial}`;
+    kuABox.innerText = `A: ${getKuSideSerial("a")}`;
+    kuBBox.innerText = `B: ${getKuSideSerial("b")}`;
 
     // hwDetected.digilent contains the connected KU serials
     const detectedKU = hwDetected.digilent.map(dev => dev.serial);    
 
-    if (!detectedKU.includes(hwConfig.ku.sides.a.serial)) {
+    if (!detectedKU.includes(getKuSideSerial("a"))) {
         kuABox.classList.add("blink-red");
     } else {
         kuABox.classList.remove("blink-red");
     }
 
-    if (!detectedKU.includes(hwConfig.ku.sides.b.serial)) {
+    if (!detectedKU.includes(getKuSideSerial("b"))) {
         kuBBox.classList.add("blink-red");
     } else {
         kuBBox.classList.remove("blink-red");
@@ -203,6 +181,8 @@ document.addEventListener("DOMContentLoaded", () => {
     initDnaChoiceModal();
     initKuFirmwareControls();
     loadKuFirmwareSets();
+    initKuAdvancedOptions();
+    loadKuAdvancedOptions();
 });
 
 
@@ -216,8 +196,1121 @@ let activeEventSources = {
 
 let activeTimers = {}; // keep track of running timers
 let kuFirmwareSets = [];
+let kuFirmwareDetails = {};
 let kuFirmwareActive = null;
 let kuFirmwareSelectSuppress = false;
+let typeConfirmResolver = null;
+
+// Session-only KU cable overrides (null = use hw_config default). Reset on refresh.
+let kuSessionCableOverrides = { a: null, b: null };
+// Session-only which sides participate in KU ops. Default both on; reset on refresh.
+let kuSessionCableEnabled = { a: true, b: true };
+let kuDiscoveredCables = [];
+let kuJtagFreqChoices = [];
+let kuAdvancedWired = false;
+let kuHwConfigFileText = "";
+let kuHwConfigFileEditing = false;
+let kuHwConfigFilePath = "";
+let kuJtagFreqSuppress = false;
+let kuGitCommits = [];
+let kuGitBusy = false;
+let kuGitWired = false;
+let kuCableSelectSuppress = false;
+let kuCableEnableSuppress = false;
+
+function getKuDefaultSerial(side) {
+    return hwConfig?.ku?.sides?.[side]?.serial || "";
+}
+
+function getKuSideSerial(side) {
+    const override = kuSessionCableOverrides[side];
+    if (override) {
+        return override;
+    }
+    return getKuDefaultSerial(side);
+}
+
+function isKuSideEnabled(side) {
+    return kuSessionCableEnabled[side] !== false;
+}
+
+function getKuEnabledSides() {
+    return ["a", "b"].filter(isKuSideEnabled);
+}
+
+function rebuildKuRuntimeMaps() {
+    if (!hwConfig?.ku?.sides) {
+        return;
+    }
+
+    window.kuSerialToSide = {};
+    getKuEnabledSides().forEach(side => {
+        const serial = getKuSideSerial(side);
+        if (serial) {
+            kuSerialToSide[serial] = side;
+        }
+    });
+
+    const kuSerials = getKuEnabledSides().map(getKuSideSerial).filter(Boolean).join("|") || "___NO_SERIAL___";
+    window.kuDnaRegex = new RegExp(
+        `\\((${kuSerials})\\).*FUSE_DNA\\s*=\\s*([0-9A-F]+)`,
+        "i"
+    );
+    window.kuResultRegex = new RegExp(
+        `\\((${kuSerials})\\)\\s+Tile Operation\\s+(Success|Failure)!`,
+        "i"
+    );
+}
+
+function formatJtagFreqLabel(hz) {
+    const value = Number(hz) || 0;
+    if (value >= 1_000_000 && value % 1_000_000 === 0) {
+        return `${value / 1_000_000} MHz`;
+    }
+    if (value >= 1000 && value % 1000 === 0) {
+        return `${value / 1000} kHz`;
+    }
+    return `${value} Hz`;
+}
+
+function setKuAdvancedStatus(message, isError = false) {
+    const el = document.getElementById("ku-advanced-status");
+    if (!el) {
+        return;
+    }
+    el.textContent = message || "";
+    el.classList.toggle("is-error", Boolean(isError && message));
+}
+
+function setKuGitStatus(message, isError = false) {
+    const el = document.getElementById("ku-git-status");
+    if (!el) {
+        return;
+    }
+    el.textContent = message || "";
+    el.classList.toggle("is-error", Boolean(isError && message));
+}
+
+function updateKuProgrammerBoxes() {
+    const kuABox = document.getElementById("ku_side_a_prog");
+    const kuBBox = document.getElementById("ku_side_b_prog");
+    if (!kuABox || !kuBBox || !hwConfig?.ku?.sides) {
+        return;
+    }
+
+    const serialA = getKuSideSerial("a");
+    const serialB = getKuSideSerial("b");
+    kuABox.innerText = isKuSideEnabled("a") ? (serialA || "---") : `${serialA || "---"} (off)`;
+    kuBBox.innerText = isKuSideEnabled("b") ? (serialB || "---") : `${serialB || "---"} (off)`;
+
+    const parentA = kuABox.closest(".id-box") || kuABox.parentElement;
+    const parentB = kuBBox.closest(".id-box") || kuBBox.parentElement;
+    const detectedKU = (hwDetected?.digilent || []).map(dev => dev.serial);
+    if (parentA) {
+        parentA.classList.toggle(
+            "blink-red",
+            isKuSideEnabled("a") && Boolean(serialA) && !detectedKU.includes(serialA)
+        );
+    }
+    if (parentB) {
+        parentB.classList.toggle(
+            "blink-red",
+            isKuSideEnabled("b") && Boolean(serialB) && !detectedKU.includes(serialB)
+        );
+    }
+}
+
+function exitKuHwConfigFileEdit(reloadText = true) {
+    kuHwConfigFileEditing = false;
+    const editor = document.getElementById("ku-hw-config-editor");
+    if (editor && reloadText) {
+        editor.value = kuHwConfigFileText;
+    }
+    updateKuAdvancedControls();
+}
+
+function isKuAdvancedModalOpen() {
+    const modal = document.getElementById("ku-advanced-modal");
+    return Boolean(modal && !modal.hidden);
+}
+
+function isKuGitModalOpen() {
+    const modal = document.getElementById("ku-git-modal");
+    return Boolean(modal && !modal.hidden);
+}
+
+function closeKuAdvancedModal() {
+    const modal = document.getElementById("ku-advanced-modal");
+    if (modal) {
+        modal.hidden = true;
+    }
+    if (kuHwConfigFileEditing) {
+        exitKuHwConfigFileEdit(true);
+    }
+}
+
+function closeKuGitModal() {
+    const modal = document.getElementById("ku-git-modal");
+    if (modal) {
+        modal.hidden = true;
+    }
+}
+
+async function openKuAdvancedModal() {
+    if (!globalEditUnlocked) {
+        return;
+    }
+    const modal = document.getElementById("ku-advanced-modal");
+    if (!modal) {
+        return;
+    }
+    closeKuGitModal();
+    setKuAdvancedStatus("");
+    await loadKuAdvancedOptions();
+    modal.hidden = false;
+    updateKuAdvancedControls();
+}
+
+async function openKuGitModal() {
+    if (!globalEditUnlocked) {
+        return;
+    }
+    const modal = document.getElementById("ku-git-modal");
+    if (!modal) {
+        return;
+    }
+    closeKuAdvancedModal();
+    setKuGitStatus("");
+    modal.hidden = false;
+    updateKuAdvancedControls();
+    await loadKuGitManager({ fetchRemote: true });
+}
+
+function syncKuCableEnableCheckboxes() {
+    const enableA = document.getElementById("ku-cable-a-enable");
+    const enableB = document.getElementById("ku-cable-b-enable");
+    const cableA = document.getElementById("ku-cable-a-select");
+    const cableB = document.getElementById("ku-cable-b-select");
+
+    kuCableEnableSuppress = true;
+    if (enableA) enableA.checked = isKuSideEnabled("a");
+    if (enableB) enableB.checked = isKuSideEnabled("b");
+    kuCableEnableSuppress = false;
+
+    if (cableA) {
+        cableA.disabled = !globalEditUnlocked || !isKuSideEnabled("a");
+        cableA.classList.toggle("is-cable-disabled", !isKuSideEnabled("a"));
+    }
+    if (cableB) {
+        cableB.disabled = !globalEditUnlocked || !isKuSideEnabled("b");
+        cableB.classList.toggle("is-cable-disabled", !isKuSideEnabled("b"));
+    }
+}
+
+function applyKuCableEnabled(side, enabled) {
+    const next = Boolean(enabled);
+    const other = side === "a" ? "b" : "a";
+    if (!next && !isKuSideEnabled(other)) {
+        syncKuCableEnableCheckboxes();
+        setKuAdvancedStatus("At least one cable must stay enabled", true);
+        return false;
+    }
+
+    kuSessionCableEnabled[side] = next;
+    rebuildKuRuntimeMaps();
+    updateKuProgrammerBoxes();
+    syncKuCableEnableCheckboxes();
+    setKuAdvancedStatus(
+        next
+            ? `Cable ${side.toUpperCase()} enabled (session only)`
+            : `Cable ${side.toUpperCase()} disabled for this session`
+    );
+    return true;
+}
+
+async function forceDefaultKuSessionOptions() {
+    if (!globalEditUnlocked) {
+        return;
+    }
+
+    const confirmed = await askTypeConfirm({
+        title: "Force session defaults",
+        message:
+            "ARE YOU SURE?\n\n" +
+            "This restores non-persistent Advanced options:\n" +
+            "- Cable A/B selection → hw_config defaults\n" +
+            "- Cable enable checkboxes → both enabled\n\n" +
+            "JTAG speed and hw_config.json are not changed.",
+        phrase: "CHANGE",
+        irreversible: false,
+    });
+    if (!confirmed) {
+        return;
+    }
+
+    kuSessionCableOverrides = { a: null, b: null };
+    kuSessionCableEnabled = { a: true, b: true };
+    rebuildKuRuntimeMaps();
+    updateKuProgrammerBoxes();
+    renderKuCableSelects();
+    syncKuCableEnableCheckboxes();
+    updateKuAdvancedControls();
+    setKuAdvancedStatus("Session options restored to defaults (both cables enabled)");
+}
+
+function updateKuAdvancedControls() {
+    const unlocked = globalEditUnlocked === true;
+    const settingsBtn = document.getElementById("ku-advanced-settings-btn");
+    const gitBtn = document.getElementById("ku-git-settings-btn");
+    const freqSelect = document.getElementById("ku-jtag-freq-select");
+    const enableA = document.getElementById("ku-cable-a-enable");
+    const enableB = document.getElementById("ku-cable-b-enable");
+    const refreshBtn = document.getElementById("ku-cables-refresh-btn");
+    const defaultsBtn = document.getElementById("ku-session-defaults-btn");
+    const editBtn = document.getElementById("ku-hw-config-edit-btn");
+    const saveBtn = document.getElementById("ku-hw-config-save-btn");
+    const cancelBtn = document.getElementById("ku-hw-config-cancel-btn");
+    const editor = document.getElementById("ku-hw-config-editor");
+    const restartHwserverBtn = document.getElementById("ku-restart-hwserver-btn");
+    const restartTileBtn = document.getElementById("ku-restart-tile-wjtag-btn");
+    const procRefreshBtn = document.getElementById("ku-proc-refresh-btn");
+    const gitRefreshBtn = document.getElementById("ku-git-refresh-btn");
+    const gitUpdateBtn = document.getElementById("ku-git-update-btn");
+    const gitRestartBtn = document.getElementById("ku-git-restart-btn");
+    const gitSelect = document.getElementById("ku-git-commit-select");
+
+    if (settingsBtn) {
+        settingsBtn.hidden = !unlocked;
+        settingsBtn.disabled = !unlocked;
+    }
+    if (gitBtn) {
+        gitBtn.hidden = !unlocked;
+        gitBtn.disabled = !unlocked;
+    }
+
+    if (!unlocked) {
+        if (isKuAdvancedModalOpen()) {
+            closeKuAdvancedModal();
+        } else if (kuHwConfigFileEditing) {
+            exitKuHwConfigFileEdit(true);
+        }
+        if (isKuGitModalOpen()) {
+            closeKuGitModal();
+        }
+    }
+
+    if (freqSelect) freqSelect.disabled = !unlocked;
+    if (enableA) enableA.disabled = !unlocked;
+    if (enableB) enableB.disabled = !unlocked;
+    if (refreshBtn) refreshBtn.disabled = !unlocked;
+    if (defaultsBtn) defaultsBtn.disabled = !unlocked;
+    if (restartHwserverBtn) restartHwserverBtn.disabled = !unlocked;
+    if (restartTileBtn) restartTileBtn.disabled = !unlocked;
+    if (procRefreshBtn) procRefreshBtn.disabled = !unlocked;
+    document.querySelectorAll(".ku-kill-proc-btn").forEach(btn => {
+        btn.disabled = !unlocked;
+    });
+    syncKuCableEnableCheckboxes();
+
+    if (editBtn) {
+        editBtn.disabled = !unlocked || kuHwConfigFileEditing;
+        editBtn.hidden = kuHwConfigFileEditing;
+    }
+    if (saveBtn) {
+        saveBtn.hidden = !kuHwConfigFileEditing;
+        saveBtn.disabled = !unlocked || !kuHwConfigFileEditing;
+    }
+    if (cancelBtn) {
+        cancelBtn.hidden = !kuHwConfigFileEditing;
+        cancelBtn.disabled = !unlocked || !kuHwConfigFileEditing;
+    }
+    if (editor) {
+        editor.readOnly = !kuHwConfigFileEditing;
+        editor.disabled = !unlocked;
+        editor.classList.toggle("is-editing", kuHwConfigFileEditing);
+    }
+
+    const gitReady = unlocked && !kuGitBusy;
+    if (gitRefreshBtn) gitRefreshBtn.disabled = !gitReady;
+    if (gitSelect) gitSelect.disabled = !gitReady;
+    if (gitRestartBtn) gitRestartBtn.disabled = !gitReady;
+    if (gitUpdateBtn) {
+        gitUpdateBtn.disabled = !gitReady || !(gitSelect && gitSelect.value);
+    }
+}
+
+function renderKuJtagFreqSelect(selectedHz) {
+    const select = document.getElementById("ku-jtag-freq-select");
+    if (!select) {
+        return;
+    }
+
+    kuJtagFreqSuppress = true;
+    select.innerHTML = "";
+    const choices = kuJtagFreqChoices.length ? kuJtagFreqChoices : [selectedHz].filter(Boolean);
+    choices.forEach(hz => {
+        const option = document.createElement("option");
+        option.value = String(hz);
+        option.textContent = formatJtagFreqLabel(hz);
+        select.appendChild(option);
+    });
+    if (selectedHz) {
+        select.value = String(selectedHz);
+    }
+    kuJtagFreqSuppress = false;
+}
+
+function renderKuCableSelects() {
+    const selectA = document.getElementById("ku-cable-a-select");
+    const selectB = document.getElementById("ku-cable-b-select");
+    if (!selectA || !selectB) {
+        return;
+    }
+
+    const defaultA = getKuDefaultSerial("a");
+    const defaultB = getKuDefaultSerial("b");
+    const selectedA = getKuSideSerial("a");
+    const selectedB = getKuSideSerial("b");
+
+    const serials = new Set();
+    if (defaultA) serials.add(defaultA);
+    if (defaultB) serials.add(defaultB);
+    kuDiscoveredCables.forEach(cable => {
+        if (cable?.serial) serials.add(cable.serial);
+    });
+    if (selectedA) serials.add(selectedA);
+    if (selectedB) serials.add(selectedB);
+
+    const buildOptions = (select, selected, defaultSerial) => {
+        select.innerHTML = "";
+        Array.from(serials).sort((a, b) => a.localeCompare(b)).forEach(serial => {
+            const option = document.createElement("option");
+            option.value = serial;
+            option.textContent = serial === defaultSerial ? `${serial} (default)` : serial;
+            select.appendChild(option);
+        });
+        if (selected && serials.has(selected)) {
+            select.value = selected;
+        } else if (defaultSerial) {
+            select.value = defaultSerial;
+        }
+    };
+
+    kuCableSelectSuppress = true;
+    buildOptions(selectA, selectedA, defaultA);
+    buildOptions(selectB, selectedB, defaultB);
+    kuCableSelectSuppress = false;
+}
+
+function applyKuCableSelection(side, serial) {
+    const defaultSerial = getKuDefaultSerial(side);
+    if (!serial || serial === defaultSerial) {
+        kuSessionCableOverrides[side] = null;
+    } else {
+        kuSessionCableOverrides[side] = serial;
+    }
+    rebuildKuRuntimeMaps();
+    updateKuProgrammerBoxes();
+    renderKuCableSelects();
+}
+
+async function loadKuHwConfigFile() {
+    const editor = document.getElementById("ku-hw-config-editor");
+    const pathEl = document.getElementById("ku-hw-config-path");
+    try {
+        const res = await fetch("api/hw_config/file");
+        const data = await res.json();
+        if (!res.ok) {
+            throw new Error(data.error || "failed to load hw_config file");
+        }
+        kuHwConfigFilePath = data.path || "";
+        kuHwConfigFileText = JSON.stringify(data.config || {}, null, 2);
+        if (pathEl) pathEl.textContent = kuHwConfigFilePath || "hw_config.json";
+        if (editor && !kuHwConfigFileEditing) {
+            editor.value = kuHwConfigFileText;
+        }
+    } catch (err) {
+        console.error("Failed to load hw_config file:", err);
+        setKuAdvancedStatus(err.message || "failed to load hw_config file", true);
+    }
+}
+
+function formatKuGitStatusLine(git) {
+    if (!git) {
+        return "---";
+    }
+    const branch = git.branch || "?";
+    const short = git.head_short || "???????";
+    const dirty = git.dirty ? ` · dirty(${git.dirty_count || 0})` : " · clean";
+    let track = "";
+    if (git.upstream) {
+        track = ` · ↑${git.ahead || 0} ↓${git.behind || 0}`;
+    }
+    return `${branch} @ ${short}${dirty}${track}`;
+}
+
+function renderKuGitStatus(git) {
+    const lineEl = document.getElementById("ku-git-status-line");
+    const dirtyEl = document.getElementById("ku-git-dirty-hint");
+    if (lineEl) {
+        lineEl.textContent = formatKuGitStatusLine(git);
+        lineEl.title = git?.subject || "";
+    }
+    if (dirtyEl) {
+        if (git?.dirty && Array.isArray(git.dirty_files) && git.dirty_files.length) {
+            const preview = git.dirty_files.slice(0, 6).join("\n");
+            const more = git.dirty_count > 6 ? `\n… +${git.dirty_count - 6} more` : "";
+            dirtyEl.textContent = `Local changes present — Update may require force:\n${preview}${more}`;
+            dirtyEl.hidden = false;
+        } else {
+            dirtyEl.textContent = "";
+            dirtyEl.hidden = true;
+        }
+    }
+}
+
+function renderKuGitCommitSelect(commits, selectedHash) {
+    const select = document.getElementById("ku-git-commit-select");
+    if (!select) {
+        return;
+    }
+    const previous = selectedHash || select.value || "";
+    select.innerHTML = "";
+    (commits || []).forEach(commit => {
+        const option = document.createElement("option");
+        option.value = commit.hash;
+        const mark = commit.is_head ? "★ " : "  ";
+        const date = (commit.date || "").slice(0, 10);
+        option.textContent = `${mark}${commit.short}  ${date}  ${commit.subject || ""}`;
+        if (commit.is_head) {
+            option.classList.add("is-git-head");
+        }
+        select.appendChild(option);
+    });
+    if (previous && Array.from(select.options).some(opt => opt.value === previous)) {
+        select.value = previous;
+    } else {
+        const head = (commits || []).find(c => c.is_head);
+        if (head) {
+            select.value = head.hash;
+        }
+    }
+}
+
+async function loadKuGitManager({ fetchRemote = true } = {}) {
+    const refreshBtn = document.getElementById("ku-git-refresh-btn");
+    if (refreshBtn) {
+        refreshBtn.textContent = fetchRemote ? "Fetching..." : "Loading...";
+    }
+    kuGitBusy = true;
+    updateKuAdvancedControls();
+    try {
+        const qs = fetchRemote ? "limit=40&fetch=1" : "limit=40&fetch=0";
+        const res = await fetch(`api/git/commits?${qs}`);
+        const data = await res.json();
+        if (!res.ok) {
+            throw new Error(data.error || "failed to load git commits");
+        }
+        kuGitCommits = data.commits || [];
+        renderKuGitCommitSelect(kuGitCommits);
+        renderKuGitStatus(data.git);
+        if (data.fetch_error) {
+            setKuGitStatus(`Git fetch warning: ${data.fetch_error}`, true);
+        } else {
+            setKuGitStatus(
+                `Git: ${kuGitCommits.length} commit(s) from ${data.ref || "remote"}`
+            );
+        }
+    } catch (err) {
+        console.error("Failed to load git manager:", err);
+        setKuGitStatus(err.message || "failed to load git commits", true);
+    } finally {
+        kuGitBusy = false;
+        if (refreshBtn) {
+            refreshBtn.textContent = "Refresh";
+        }
+        updateKuAdvancedControls();
+    }
+}
+
+async function forceKuGitCheckout(commitHash, reason) {
+    const confirmed = await askTypeConfirm({
+        title: "Force git checkout",
+        message:
+            "ARE YOU SURE?\n\n" +
+            `${reason || "Checkout blocked by local changes or conflicts."}\n\n` +
+            `This will discard local modifications and reset hard to:\n${commitHash}\n\n` +
+            "Untracked files may also be removed.",
+        phrase: "force git",
+        irreversible: true,
+    });
+    if (!confirmed) {
+        setKuGitStatus("Force git cancelled");
+        return false;
+    }
+
+    setKuGitStatus(`Force checking out ${commitHash.slice(0, 7)}...`);
+    const res = await fetch("api/git/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            commit: commitHash,
+            force: true,
+            confirm_phrase: "force git",
+        }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+        throw new Error(data.error || "force git checkout failed");
+    }
+    renderKuGitStatus(data.git);
+    await loadKuGitManager({ fetchRemote: false });
+    setKuGitStatus(
+        `${data.message || "Force checkout done"}. Restart tile-wjtag to load new code.`
+    );
+    return true;
+}
+
+async function updateKuGitToSelected() {
+    if (!globalEditUnlocked || kuGitBusy) {
+        return;
+    }
+    const select = document.getElementById("ku-git-commit-select");
+    const commitHash = select?.value;
+    if (!commitHash) {
+        setKuGitStatus("Select a commit first", true);
+        return;
+    }
+
+    const commit = kuGitCommits.find(c => c.hash === commitHash);
+    const label = commit
+        ? `${commit.short} — ${commit.subject}`
+        : commitHash.slice(0, 7);
+
+    kuGitBusy = true;
+    updateKuAdvancedControls();
+    setKuGitStatus(`Updating to ${label}...`);
+    try {
+        const res = await fetch("api/git/checkout", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ commit: commitHash, force: false }),
+        });
+        const data = await res.json();
+
+        if (res.status === 409 || data.needs_force) {
+            kuGitBusy = false;
+            updateKuAdvancedControls();
+            renderKuGitStatus(data.git);
+            await forceKuGitCheckout(
+                commitHash,
+                data.error || "Local changes or conflicts prevent a clean checkout."
+            );
+            return;
+        }
+
+        if (!res.ok) {
+            throw new Error(data.error || "git checkout failed");
+        }
+
+        renderKuGitStatus(data.git);
+        await loadKuGitManager({ fetchRemote: false });
+        setKuGitStatus(
+            data.restart_recommended
+                ? `${data.message || "Checkout done"}. Restart tile-wjtag to load new code.`
+                : (data.message || "Already at selected commit")
+        );
+    } catch (err) {
+        console.error("Git update failed:", err);
+        setKuGitStatus(err.message || "git update failed", true);
+    } finally {
+        kuGitBusy = false;
+        updateKuAdvancedControls();
+    }
+}
+
+function renderKuProcessCounts(counts) {
+    const lineEl = document.getElementById("ku-proc-status-line");
+    const map = counts || {};
+    const names = ["vivado_lab", "cs_server", "FPExpress_bin"];
+    if (lineEl) {
+        lineEl.textContent = names
+            .map(name => `${name}: ${map[name] || 0}`)
+            .join("  ·  ");
+    }
+    names.forEach(name => {
+        const btn = document.getElementById(`ku-kill-${name}-btn`);
+        if (!btn) {
+            return;
+        }
+        const count = map[name] || 0;
+        btn.textContent = count ? `${name} (${count})` : name;
+    });
+}
+
+async function loadKuProcessStatus() {
+    try {
+        const res = await fetch("api/process_status");
+        const data = await res.json();
+        if (!res.ok) {
+            throw new Error(data.error || "failed to load process status");
+        }
+        renderKuProcessCounts(data.counts || {});
+    } catch (err) {
+        console.error("Failed to load process status:", err);
+        setKuAdvancedStatus(err.message || "failed to load process status", true);
+    }
+}
+
+async function killKuNamedProcess(name) {
+    if (!globalEditUnlocked || !name) {
+        return;
+    }
+    const confirmed = await askTypeConfirm({
+        title: `Kill ${name}`,
+        message:
+            `Send SIGTERM to all running ${name} processes?\n\n` +
+            "Use this to clear a stuck programmer/session without killing the others.",
+        phrase: "kill",
+        irreversible: false,
+    });
+    if (!confirmed) {
+        return;
+    }
+
+    setKuAdvancedStatus(`Killing ${name}...`);
+    try {
+        const res = await fetch("api/kill_process", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            throw new Error(data.error || `failed to kill ${name}`);
+        }
+        renderKuProcessCounts(data.counts || {});
+        const n = (data.killed_detail || []).length;
+        setKuAdvancedStatus(
+            n ? `Killed ${n} ${name} process(es)` : `No ${name} process running`
+        );
+    } catch (err) {
+        console.error(`Failed to kill ${name}:`, err);
+        setKuAdvancedStatus(err.message || `failed to kill ${name}`, true);
+    }
+}
+
+async function restartLocalService(serviceName, statusSetter = setKuAdvancedStatus) {
+    if (!globalEditUnlocked || !serviceName) {
+        return;
+    }
+    const confirmed = await askTypeConfirm({
+        title: `Restart ${serviceName}`,
+        message:
+            `Restart ${serviceName}.service now?\n\n` +
+            (serviceName === "tile-wjtag"
+                ? "The page may disconnect briefly while the service comes back."
+                : "Active JTAG/hw_server sessions may drop."),
+        phrase: "restart",
+        irreversible: false,
+    });
+    if (!confirmed) {
+        return;
+    }
+
+    statusSetter(`Restarting ${serviceName}...`);
+    try {
+        const res = await fetch("api/restart_service", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ service: serviceName }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            throw new Error(data.error || `failed to restart ${serviceName}`);
+        }
+        statusSetter(`${serviceName}: ${data.result || "restart requested"}`);
+    } catch (err) {
+        console.error(`Failed to restart ${serviceName}:`, err);
+        statusSetter(err.message || `failed to restart ${serviceName}`, true);
+    }
+}
+
+async function loadKuAdvancedOptions() {
+    try {
+        const res = await fetch("api/ku/advanced");
+        const data = await res.json();
+        if (!res.ok) {
+            throw new Error(data.error || "failed to load advanced options");
+        }
+        kuJtagFreqChoices = data.jtag_freq_choices || [];
+        renderKuJtagFreqSelect(data.jtag_freq_hz);
+        renderKuCableSelects();
+        if (data.hw_config_path) {
+            kuHwConfigFilePath = data.hw_config_path;
+            const pathEl = document.getElementById("ku-hw-config-path");
+            if (pathEl) pathEl.textContent = kuHwConfigFilePath;
+        }
+        await loadKuHwConfigFile();
+        await loadKuProcessStatus();
+        updateKuAdvancedControls();
+    } catch (err) {
+        console.error("Failed to load KU advanced options:", err);
+        setKuAdvancedStatus(err.message || "failed to load advanced options", true);
+    }
+}
+
+async function saveKuJtagFrequency(freqHz) {
+    if (!globalEditUnlocked) {
+        return;
+    }
+    setKuAdvancedStatus(`Saving JTAG speed ${formatJtagFreqLabel(freqHz)}...`);
+    try {
+        const res = await fetch("api/ku/jtag_freq", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ jtag_freq_hz: freqHz }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            throw new Error(data.error || "failed to save JTAG frequency");
+        }
+        if (data.hw_config) {
+            hwConfig = data.hw_config;
+            rebuildKuRuntimeMaps();
+            updateKuProgrammerBoxes();
+        }
+        setKuAdvancedStatus(`JTAG speed saved: ${formatJtagFreqLabel(freqHz)}`);
+    } catch (err) {
+        console.error("Failed to save JTAG frequency:", err);
+        setKuAdvancedStatus(err.message || "failed to save JTAG frequency", true);
+        await loadKuAdvancedOptions();
+    }
+}
+
+async function refreshKuCablesFromVivado() {
+    if (!globalEditUnlocked) {
+        return;
+    }
+    const refreshBtn = document.getElementById("ku-cables-refresh-btn");
+    if (refreshBtn) {
+        refreshBtn.disabled = true;
+        refreshBtn.textContent = "Scanning...";
+    }
+    setKuAdvancedStatus("Opening Vivado session to list cables...");
+    try {
+        const res = await fetch("api/ku/cables");
+        const data = await res.json();
+        if (!res.ok) {
+            throw new Error(data.error || "failed to list cables");
+        }
+        kuDiscoveredCables = data.cables || [];
+        renderKuCableSelects();
+        setKuAdvancedStatus(
+            kuDiscoveredCables.length
+                ? `Found ${kuDiscoveredCables.length} cable(s) via Vivado`
+                : "No Digilent cables reported by Vivado"
+        );
+    } catch (err) {
+        console.error("Failed to list KU cables:", err);
+        setKuAdvancedStatus(err.message || "failed to list cables", true);
+    } finally {
+        if (refreshBtn) {
+            refreshBtn.textContent = "Refresh cables";
+        }
+        updateKuAdvancedControls();
+    }
+}
+
+async function saveKuHwConfigFile() {
+    if (!globalEditUnlocked || !kuHwConfigFileEditing) {
+        return;
+    }
+    const editor = document.getElementById("ku-hw-config-editor");
+    const raw = editor?.value || "";
+    let parsed;
+    try {
+        parsed = JSON.parse(raw);
+    } catch (err) {
+        setKuAdvancedStatus(`Invalid JSON: ${err.message}`, true);
+        return;
+    }
+
+    setKuAdvancedStatus("Saving hw_config.json...");
+    try {
+        const res = await fetch("api/hw_config/file", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ config: parsed }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            throw new Error(data.error || "failed to save hw_config file");
+        }
+
+        kuHwConfigFileText = JSON.stringify(data.config || parsed, null, 2);
+        if (data.hw_config) {
+            hwConfig = data.hw_config;
+        }
+        kuHwConfigFileEditing = false;
+        if (editor) {
+            editor.value = kuHwConfigFileText;
+        }
+        rebuildKuRuntimeMaps();
+        updateKuProgrammerBoxes();
+        renderKuCableSelects();
+        renderKuJtagFreqSelect(hwConfig?.ku?.jtag_freq_hz);
+        updateKuAdvancedControls();
+        setKuAdvancedStatus("hw_config.json saved");
+    } catch (err) {
+        console.error("Failed to save hw_config file:", err);
+        setKuAdvancedStatus(err.message || "failed to save hw_config file", true);
+    }
+}
+
+function initKuGitManager() {
+    if (kuGitWired) {
+        updateKuAdvancedControls();
+        return;
+    }
+
+    const modal = document.getElementById("ku-git-modal");
+    const gitBtn = document.getElementById("ku-git-settings-btn");
+    const closeBtn = document.getElementById("ku-git-close-btn");
+    const doneBtn = document.getElementById("ku-git-done-btn");
+    const gitRefreshBtn = document.getElementById("ku-git-refresh-btn");
+    const gitUpdateBtn = document.getElementById("ku-git-update-btn");
+    const gitRestartBtn = document.getElementById("ku-git-restart-btn");
+    const gitSelect = document.getElementById("ku-git-commit-select");
+
+    if (gitBtn) {
+        gitBtn.addEventListener("click", () => {
+            openKuGitModal();
+        });
+    }
+    if (closeBtn) {
+        closeBtn.addEventListener("click", closeKuGitModal);
+    }
+    if (doneBtn) {
+        doneBtn.addEventListener("click", closeKuGitModal);
+    }
+    if (modal) {
+        modal.addEventListener("click", event => {
+            if (event.target === modal) {
+                closeKuGitModal();
+            }
+        });
+    }
+    if (gitRefreshBtn) {
+        gitRefreshBtn.addEventListener("click", () => {
+            loadKuGitManager({ fetchRemote: true });
+        });
+    }
+    if (gitUpdateBtn) {
+        gitUpdateBtn.addEventListener("click", updateKuGitToSelected);
+    }
+    if (gitRestartBtn) {
+        gitRestartBtn.addEventListener("click", () => {
+            restartLocalService("tile-wjtag", setKuGitStatus);
+        });
+    }
+    if (gitSelect) {
+        gitSelect.addEventListener("change", () => {
+            updateKuAdvancedControls();
+            const commit = kuGitCommits.find(c => c.hash === gitSelect.value);
+            if (commit) {
+                setKuGitStatus(`Selected ${commit.short}: ${commit.subject || ""}`);
+            }
+        });
+    }
+
+    kuGitWired = true;
+    updateKuAdvancedControls();
+}
+
+function initKuAdvancedOptions() {
+    if (kuAdvancedWired) {
+        updateKuAdvancedControls();
+        return;
+    }
+
+    const modal = document.getElementById("ku-advanced-modal");
+    const settingsBtn = document.getElementById("ku-advanced-settings-btn");
+    const closeBtn = document.getElementById("ku-advanced-close-btn");
+    const doneBtn = document.getElementById("ku-advanced-done-btn");
+    const freqSelect = document.getElementById("ku-jtag-freq-select");
+    const cableA = document.getElementById("ku-cable-a-select");
+    const cableB = document.getElementById("ku-cable-b-select");
+    const enableA = document.getElementById("ku-cable-a-enable");
+    const enableB = document.getElementById("ku-cable-b-enable");
+    const refreshBtn = document.getElementById("ku-cables-refresh-btn");
+    const defaultsBtn = document.getElementById("ku-session-defaults-btn");
+    const editBtn = document.getElementById("ku-hw-config-edit-btn");
+    const saveBtn = document.getElementById("ku-hw-config-save-btn");
+    const cancelBtn = document.getElementById("ku-hw-config-cancel-btn");
+    const restartHwserverBtn = document.getElementById("ku-restart-hwserver-btn");
+    const restartTileBtn = document.getElementById("ku-restart-tile-wjtag-btn");
+    const procRefreshBtn = document.getElementById("ku-proc-refresh-btn");
+
+    if (settingsBtn) {
+        settingsBtn.addEventListener("click", () => {
+            openKuAdvancedModal();
+        });
+    }
+
+    if (enableA) {
+        enableA.addEventListener("change", () => {
+            if (kuCableEnableSuppress || !globalEditUnlocked) {
+                return;
+            }
+            applyKuCableEnabled("a", enableA.checked);
+        });
+    }
+    if (enableB) {
+        enableB.addEventListener("change", () => {
+            if (kuCableEnableSuppress || !globalEditUnlocked) {
+                return;
+            }
+            applyKuCableEnabled("b", enableB.checked);
+        });
+    }
+    if (defaultsBtn) {
+        defaultsBtn.addEventListener("click", () => {
+            forceDefaultKuSessionOptions();
+        });
+    }
+
+    if (closeBtn) {
+        closeBtn.addEventListener("click", closeKuAdvancedModal);
+    }
+    if (doneBtn) {
+        doneBtn.addEventListener("click", closeKuAdvancedModal);
+    }
+    if (modal) {
+        modal.addEventListener("click", event => {
+            if (event.target === modal) {
+                closeKuAdvancedModal();
+            }
+        });
+    }
+
+    if (freqSelect) {
+        freqSelect.addEventListener("change", async () => {
+            if (kuJtagFreqSuppress || !globalEditUnlocked) {
+                return;
+            }
+            const freq = Number(freqSelect.value);
+            if (!freq) {
+                return;
+            }
+            await saveKuJtagFrequency(freq);
+        });
+    }
+
+    if (cableA) {
+        cableA.addEventListener("change", () => {
+            if (kuCableSelectSuppress || !globalEditUnlocked) {
+                return;
+            }
+            applyKuCableSelection("a", cableA.value);
+            setKuAdvancedStatus(`Cable A set to ${getKuSideSerial("a")} (session only)`);
+        });
+    }
+
+    if (cableB) {
+        cableB.addEventListener("change", () => {
+            if (kuCableSelectSuppress || !globalEditUnlocked) {
+                return;
+            }
+            applyKuCableSelection("b", cableB.value);
+            setKuAdvancedStatus(`Cable B set to ${getKuSideSerial("b")} (session only)`);
+        });
+    }
+
+    if (refreshBtn) {
+        refreshBtn.addEventListener("click", refreshKuCablesFromVivado);
+    }
+
+    if (editBtn) {
+        editBtn.addEventListener("click", () => {
+            if (!globalEditUnlocked) {
+                return;
+            }
+            kuHwConfigFileEditing = true;
+            const editor = document.getElementById("ku-hw-config-editor");
+            if (editor) {
+                editor.value = kuHwConfigFileText;
+                editor.focus();
+            }
+            updateKuAdvancedControls();
+            setKuAdvancedStatus("Editing hw_config.json — auto-locks with Global after 60s idle");
+        });
+    }
+
+    if (cancelBtn) {
+        cancelBtn.addEventListener("click", () => {
+            exitKuHwConfigFileEdit(true);
+            setKuAdvancedStatus("Config edit cancelled");
+        });
+    }
+
+    if (saveBtn) {
+        saveBtn.addEventListener("click", saveKuHwConfigFile);
+    }
+
+    if (restartHwserverBtn) {
+        restartHwserverBtn.addEventListener("click", () => {
+            restartLocalService("hwserver-aux", setKuAdvancedStatus);
+        });
+    }
+    if (restartTileBtn) {
+        restartTileBtn.addEventListener("click", () => {
+            restartLocalService("tile-wjtag", setKuAdvancedStatus);
+        });
+    }
+    if (procRefreshBtn) {
+        procRefreshBtn.addEventListener("click", async () => {
+            setKuAdvancedStatus("Refreshing process counts...");
+            await loadKuProcessStatus();
+            setKuAdvancedStatus("Process counts updated");
+        });
+    }
+    document.querySelectorAll(".ku-kill-proc-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+            killKuNamedProcess(btn.dataset.proc);
+        });
+    });
+
+    kuAdvancedWired = true;
+    initKuGitManager();
+    updateKuAdvancedControls();
+}
+
+function buildKuRunUrl(action) {
+    const params = new URLSearchParams();
+    const defaultA = getKuDefaultSerial("a");
+    const defaultB = getKuDefaultSerial("b");
+    const serialA = getKuSideSerial("a");
+    const serialB = getKuSideSerial("b");
+    const enableA = isKuSideEnabled("a");
+    const enableB = isKuSideEnabled("b");
+
+    if (enableA && serialA && serialA !== defaultA) {
+        params.set("cable_a", serialA);
+    }
+    if (enableB && serialB && serialB !== defaultB) {
+        params.set("cable_b", serialB);
+    }
+    if (!enableA) {
+        params.set("enable_a", "0");
+    }
+    if (!enableB) {
+        params.set("enable_b", "0");
+    }
+
+    const query = params.toString();
+    return query ? `run/${action}?${query}` : `run/${action}`;
+}
 
 
 function resetDbBoxes() {
@@ -1151,6 +2244,10 @@ function lockAllEditModes(reloadFromData = true) {
         groupEditUnlocked[groupId] = false;
     });
 
+    if (kuHwConfigFileEditing) {
+        exitKuHwConfigFileEdit(true);
+    }
+
     if (reloadFromData && currentDaughterboardData) {
         applyDaughterboardValues(currentDaughterboardData);
     }
@@ -1168,6 +2265,7 @@ function updateEditModeUI() {
     }
 
     updateKuFirmwareControls();
+    updateKuAdvancedControls();
 
     DAUGHTERBOARD_GROUPS.forEach(group => {
         const groupBtn = document.getElementById(`db-group-edit-${group.id}`);
@@ -1273,8 +2371,10 @@ function initDaughterboardEditControls() {
             if (!globalEditUnlocked) {
                 const confirmed = confirm(
                     "Warning: unlock global edit mode?\n\n" +
-                    "This enables KU firmware management and daughterboard group edit toggles.\n" +
-                    "Database changes still require group edit + Save."
+                    "This enables KU firmware management, Advanced options (JTAG/cables/config),\n" +
+                    "and daughterboard group edit toggles.\n" +
+                    "Database changes still require group edit + Save.\n" +
+                    "Auto-locks after 60s idle."
                 );
                 if (!confirmed) {
                     return;
@@ -2009,7 +3109,8 @@ function isFailedStatusText(text) {
 }
 
 function checkLedStatus(type) {
-    const sides = ["a", "b"];
+    const isKuType = type.startsWith("ku");
+    const sides = isKuType ? getKuEnabledSides() : ["a", "b"];
     let failed = false;
     let seen = 0;
 
@@ -2037,7 +3138,8 @@ function checkLedStatus(type) {
         }
     });
 
-    if (seen < 2) {
+    const required = isKuType ? Math.max(sides.length, 1) : 2;
+    if (seen < required) {
         failed = true;
     }
 
@@ -2175,12 +3277,29 @@ function updateDbBoxes() {
     }
 }
 
+function applyKuFirmwarePayload(data) {
+    if (!data) {
+        return;
+    }
+    if (Array.isArray(data.sets)) {
+        kuFirmwareSets = data.sets;
+    }
+    if (data.details && typeof data.details === "object") {
+        kuFirmwareDetails = data.details;
+    }
+    if (Object.prototype.hasOwnProperty.call(data, "active")) {
+        kuFirmwareActive = data.active || null;
+    }
+}
+
 function updateKuFirmwareControls() {
     const unlocked = globalEditUnlocked === true;
     const panel = document.getElementById("ku-fw-panel");
     const select = document.getElementById("ku-fw-set-select");
     const uploadBtn = document.getElementById("ku-fw-upload-btn");
     const downloadBtn = document.getElementById("ku-fw-download-btn");
+    const deleteBtn = document.getElementById("ku-fw-delete-btn");
+    const selected = select?.value || "";
 
     if (panel) {
         panel.classList.toggle("is-locked", !unlocked);
@@ -2194,6 +3313,17 @@ function updateKuFirmwareControls() {
     if (downloadBtn) {
         downloadBtn.disabled = !unlocked || !kuFirmwareActive;
     }
+    if (deleteBtn) {
+        deleteBtn.disabled = !unlocked || !selected;
+    }
+}
+
+function firmwareSetLabel(setName) {
+    const meta = kuFirmwareDetails[setName];
+    if (meta && meta.complete === false) {
+        return `${setName} (bin only)`;
+    }
+    return setName;
 }
 
 function renderKuFirmwareSelect(sets, active) {
@@ -2214,7 +3344,7 @@ function renderKuFirmwareSelect(sets, active) {
         sets.forEach(setName => {
             const option = document.createElement("option");
             option.value = setName;
-            option.textContent = setName;
+            option.textContent = firmwareSetLabel(setName);
             select.appendChild(option);
         });
         if (active && sets.includes(active)) {
@@ -2223,6 +3353,7 @@ function renderKuFirmwareSelect(sets, active) {
     }
 
     kuFirmwareSelectSuppress = false;
+    updateKuFirmwareControls();
 }
 
 async function loadKuFirmwareSets() {
@@ -2232,8 +3363,7 @@ async function loadKuFirmwareSets() {
         if (!res.ok) {
             throw new Error(data.error || "failed to load firmware sets");
         }
-        kuFirmwareSets = data.sets || [];
-        kuFirmwareActive = data.active || null;
+        applyKuFirmwarePayload(data);
         renderKuFirmwareSelect(kuFirmwareSets, kuFirmwareActive);
         updateKuFirmwareControls();
     } catch (err) {
@@ -2260,6 +3390,20 @@ function getUploadStemAndExts(fileList) {
     return { byExt, stems, files };
 }
 
+function classifyUploadSelection(byExt, stems) {
+    const provided = Object.keys(byExt);
+    if (!provided.length || stems.size !== 1) {
+        return { ok: false, mode: null };
+    }
+    if (byExt.bit && byExt.bin && byExt.ltx && provided.length === 3) {
+        return { ok: true, mode: "full" };
+    }
+    if (byExt.bin && provided.length === 1) {
+        return { ok: true, mode: "bin_only" };
+    }
+    return { ok: false, mode: null };
+}
+
 function updateKuFirmwareUploadPreview() {
     const preview = document.getElementById("ku-fw-upload-preview");
     const errorEl = document.getElementById("ku-fw-upload-error");
@@ -2271,8 +3415,7 @@ function updateKuFirmwareUploadPreview() {
 
     const tag = (tagInput?.value || "").trim();
     const { byExt, stems } = getUploadStemAndExts(filesInput?.files);
-    const required = ["bit", "bin", "ltx"];
-    const missing = required.filter(ext => !byExt[ext]);
+    const classified = classifyUploadSelection(byExt, stems);
 
     if (errorEl) {
         errorEl.hidden = true;
@@ -2283,17 +3426,18 @@ function updateKuFirmwareUploadPreview() {
         preview.textContent = "Result: ---";
         return;
     }
-    if (missing.length || stems.size !== 1) {
-        preview.textContent = "Result: select matching .bit .bin .ltx files";
+    if (!classified.ok) {
+        preview.textContent = "Result: select .bit+.bin+.ltx, or only .bin";
         return;
     }
 
     const stem = Array.from(stems)[0];
+    const suffix = classified.mode === "bin_only" ? ".bin" : ".{bit,bin,ltx}";
     if (!tag) {
-        preview.textContent = `Result: ${stem}_<tag>.{bit,bin,ltx}`;
+        preview.textContent = `Result: ${stem}_<tag>${suffix}`;
         return;
     }
-    preview.textContent = `Result: ${stem}_${tag}.{bit,bin,ltx}`;
+    preview.textContent = `Result: ${stem}_${tag}${suffix}`;
 }
 
 function openKuFirmwareUploadModal() {
@@ -2319,6 +3463,119 @@ function closeKuFirmwareUploadModal() {
     if (modal) modal.hidden = true;
 }
 
+function closeTypeConfirmModal(result) {
+    const modal = document.getElementById("type-confirm-modal");
+    if (modal) modal.hidden = true;
+    const resolver = typeConfirmResolver;
+    typeConfirmResolver = null;
+    if (resolver) {
+        resolver(Boolean(result));
+    }
+}
+
+function askTypeConfirm({ title, message, phrase, irreversible = false }) {
+    return new Promise(resolve => {
+        const modal = document.getElementById("type-confirm-modal");
+        const titleEl = document.getElementById("type-confirm-title");
+        const messageEl = document.getElementById("type-confirm-message");
+        const bannerEl = document.getElementById("type-confirm-banner");
+        const phraseEl = document.getElementById("type-confirm-phrase");
+        const inputEl = document.getElementById("type-confirm-input");
+        const errorEl = document.getElementById("type-confirm-error");
+        const okBtn = document.getElementById("type-confirm-ok");
+
+        if (!modal || !inputEl) {
+            resolve(false);
+            return;
+        }
+
+        if (typeConfirmResolver) {
+            typeConfirmResolver(false);
+        }
+        typeConfirmResolver = resolve;
+
+        if (titleEl) titleEl.textContent = title || "Confirm";
+        if (messageEl) messageEl.textContent = message || "";
+        if (phraseEl) phraseEl.textContent = phrase || "";
+        if (bannerEl) bannerEl.hidden = !irreversible;
+        if (errorEl) {
+            errorEl.hidden = true;
+            errorEl.textContent = "";
+        }
+        inputEl.value = "";
+        if (okBtn) okBtn.disabled = true;
+        modal.hidden = false;
+        setTimeout(() => inputEl.focus(), 0);
+    });
+}
+
+function syncTypeConfirmOkEnabled() {
+    const inputEl = document.getElementById("type-confirm-input");
+    const phraseEl = document.getElementById("type-confirm-phrase");
+    const okBtn = document.getElementById("type-confirm-ok");
+    const errorEl = document.getElementById("type-confirm-error");
+    if (!inputEl || !okBtn || !phraseEl) {
+        return;
+    }
+    const expected = (phraseEl.textContent || "").trim();
+    const ok = inputEl.value.trim() === expected;
+    okBtn.disabled = !ok;
+    if (errorEl && ok) {
+        errorEl.hidden = true;
+        errorEl.textContent = "";
+    }
+}
+
+function initTypeConfirmModal() {
+    const modal = document.getElementById("type-confirm-modal");
+    const cancelBtn = document.getElementById("type-confirm-cancel");
+    const okBtn = document.getElementById("type-confirm-ok");
+    const inputEl = document.getElementById("type-confirm-input");
+
+    if (cancelBtn && !cancelBtn.dataset.wired) {
+        cancelBtn.addEventListener("click", () => closeTypeConfirmModal(false));
+        cancelBtn.dataset.wired = "true";
+    }
+    if (okBtn && !okBtn.dataset.wired) {
+        okBtn.addEventListener("click", () => {
+            const phraseEl = document.getElementById("type-confirm-phrase");
+            const errorEl = document.getElementById("type-confirm-error");
+            const expected = (phraseEl?.textContent || "").trim();
+            if ((inputEl?.value || "").trim() !== expected) {
+                if (errorEl) {
+                    errorEl.hidden = false;
+                    errorEl.textContent = `Type exactly: ${expected}`;
+                }
+                return;
+            }
+            closeTypeConfirmModal(true);
+        });
+        okBtn.dataset.wired = "true";
+    }
+    if (inputEl && !inputEl.dataset.wired) {
+        inputEl.addEventListener("input", syncTypeConfirmOkEnabled);
+        inputEl.addEventListener("keydown", event => {
+            if (event.key === "Enter") {
+                event.preventDefault();
+                if (okBtn && !okBtn.disabled) {
+                    okBtn.click();
+                }
+            } else if (event.key === "Escape") {
+                closeTypeConfirmModal(false);
+            }
+        });
+        inputEl.dataset.wired = "true";
+    }
+    if (modal && !modal.dataset.wired) {
+        modal.addEventListener("click", event => {
+            if (event.target === modal) {
+                closeTypeConfirmModal(false);
+            }
+        });
+        modal.dataset.wired = "true";
+    }
+}
+
 async function submitKuFirmwareUpload() {
     if (!globalEditUnlocked) {
         return;
@@ -2330,6 +3587,7 @@ async function submitKuFirmwareUpload() {
     const confirmBtn = document.getElementById("ku-fw-upload-confirm");
     const tag = (tagInput?.value || "").trim();
     const { byExt, stems } = getUploadStemAndExts(filesInput?.files);
+    const classified = classifyUploadSelection(byExt, stems);
 
     const showError = (message) => {
         if (errorEl) {
@@ -2344,16 +3602,34 @@ async function submitKuFirmwareUpload() {
         showError("Enter a valid tag (letters, numbers, . _ -).");
         return;
     }
-    if (stems.size !== 1 || !byExt.bit || !byExt.bin || !byExt.ltx) {
-        showError("Select exactly one .bit, one .bin, and one .ltx with the same base name.");
+    if (!classified.ok) {
+        showError("Select .bit + .bin + .ltx with the same base name, or only a .bin file.");
         return;
+    }
+
+    let allowBinOnly = false;
+    if (classified.mode === "bin_only") {
+        const confirmed = await askTypeConfirm({
+            title: "Bin-only firmware upload",
+            message:
+                "ARE YOU SURE?\n\n" +
+                "You are uploading only a .bin file. FPGA bitstream programming (.bit/.ltx) " +
+                "will not be available for this set — only flash memory ops that use the bin.",
+            phrase: "only bin file",
+            irreversible: false,
+        });
+        if (!confirmed) {
+            return;
+        }
+        allowBinOnly = true;
     }
 
     const form = new FormData();
     form.append("tag", tag);
-    form.append("files", byExt.bit);
-    form.append("files", byExt.bin);
-    form.append("files", byExt.ltx);
+    form.append("allow_bin_only", allowBinOnly ? "1" : "0");
+    if (byExt.bit) form.append("files", byExt.bit);
+    if (byExt.bin) form.append("files", byExt.bin);
+    if (byExt.ltx) form.append("files", byExt.ltx);
 
     if (confirmBtn) {
         confirmBtn.disabled = true;
@@ -2370,8 +3646,7 @@ async function submitKuFirmwareUpload() {
             throw new Error(data.error || "upload failed");
         }
 
-        kuFirmwareSets = data.sets || [];
-        kuFirmwareActive = data.active || kuFirmwareActive;
+        applyKuFirmwarePayload(data);
         renderKuFirmwareSelect(kuFirmwareSets, kuFirmwareActive);
         updateKuFirmwareControls();
         closeKuFirmwareUploadModal();
@@ -2409,8 +3684,7 @@ async function selectKuFirmwareSet(setName) {
             throw new Error(data.error || "select failed");
         }
 
-        kuFirmwareSets = data.sets || kuFirmwareSets;
-        kuFirmwareActive = data.active || setName;
+        applyKuFirmwarePayload(data);
         if (data.hw_config) {
             hwConfig = data.hw_config;
         }
@@ -2423,6 +3697,49 @@ async function selectKuFirmwareSet(setName) {
     }
 }
 
+async function deleteSelectedKuFirmwareSet() {
+    if (!globalEditUnlocked) {
+        return;
+    }
+
+    const select = document.getElementById("ku-fw-set-select");
+    const setName = (select?.value || "").trim();
+    if (!setName) {
+        return;
+    }
+
+    const confirmed = await askTypeConfirm({
+        title: "Delete firmware set",
+        message:
+            `ARE YOU SURE you want to permanently delete "${setName}"?\n\n` +
+            "This removes the .bit/.bin/.ltx files for that set from the station.",
+        phrase: "delete me",
+        irreversible: true,
+    });
+    if (!confirmed) {
+        return;
+    }
+
+    try {
+        const res = await fetch("api/ku/firmware/delete", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ set: setName, confirm: "delete me" }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            throw new Error(data.error || "delete failed");
+        }
+
+        applyKuFirmwarePayload(data);
+        renderKuFirmwareSelect(kuFirmwareSets, kuFirmwareActive);
+        updateKuFirmwareControls();
+    } catch (err) {
+        console.error("Failed to delete firmware set:", err);
+        alert(`Failed to delete firmware set: ${err.message}`);
+    }
+}
+
 function downloadCurrentKuFirmware() {
     if (!globalEditUnlocked || !kuFirmwareActive) {
         return;
@@ -2431,8 +3748,11 @@ function downloadCurrentKuFirmware() {
 }
 
 function initKuFirmwareControls() {
+    initTypeConfirmModal();
+
     const uploadBtn = document.getElementById("ku-fw-upload-btn");
     const downloadBtn = document.getElementById("ku-fw-download-btn");
+    const deleteBtn = document.getElementById("ku-fw-delete-btn");
     const select = document.getElementById("ku-fw-set-select");
     const modal = document.getElementById("ku-fw-upload-modal");
     const cancelBtn = document.getElementById("ku-fw-upload-cancel");
@@ -2448,12 +3768,18 @@ function initKuFirmwareControls() {
         downloadBtn.addEventListener("click", downloadCurrentKuFirmware);
         downloadBtn.dataset.wired = "true";
     }
+    if (deleteBtn && !deleteBtn.dataset.wired) {
+        deleteBtn.addEventListener("click", deleteSelectedKuFirmwareSet);
+        deleteBtn.dataset.wired = "true";
+    }
     if (select && !select.dataset.wired) {
         select.addEventListener("change", async () => {
             if (kuFirmwareSelectSuppress || !globalEditUnlocked) {
+                updateKuFirmwareControls();
                 return;
             }
             const next = select.value;
+            updateKuFirmwareControls();
             if (!next || next === kuFirmwareActive) {
                 return;
             }
@@ -2528,6 +3854,36 @@ function setGroupConsoleRunning(group, running) {
     }
 }
 
+function getActiveKuFirmwarePaths() {
+    const side = hwConfig?.ku?.sides?.a || {};
+    return {
+        bitfile: (side.bitfile || "").trim(),
+        binfile: (side.binfile || "").trim(),
+        ltxfile: (side.ltxfile || "").trim(),
+    };
+}
+
+function preflightKuFirmwareAction(action) {
+    const paths = getActiveKuFirmwarePaths();
+    if (action === "program_ku") {
+        if (!paths.bitfile) {
+            alert(
+                "Active firmware set has no .bit file.\n\n" +
+                "Bin-only sets can be used for flash program/verify/erase/blank.\n" +
+                "Select a full firmware set (.bit/.bin/.ltx) to program the FPGA."
+            );
+            return false;
+        }
+    }
+    if (action === "program_ku_flash" || action === "verify_ku_flash") {
+        if (!paths.binfile) {
+            alert("Active firmware set has no .bin file.");
+            return false;
+        }
+    }
+    return true;
+}
+
 async function startAction(action, type) {
     lockAllEditModes(true);
 
@@ -2553,6 +3909,10 @@ async function startAction(action, type) {
 
     if (!group) {
         console.warn("Unknown action group:", action);
+        return;
+    }
+
+    if (group === "ku" && !preflightKuFirmwareAction(action)) {
         return;
     }
 
@@ -2600,7 +3960,8 @@ async function startAction(action, type) {
     }
 
 
-    activeEventSources[group] = new EventSource("run/" + action);
+    const runUrl = group === "ku" ? buildKuRunUrl(action) : `run/${action}`;
+    activeEventSources[group] = new EventSource(runUrl);
     const eventSource = activeEventSources[group];
     let groupOperationFinished = false;
 
@@ -2750,8 +4111,8 @@ async function startAction(action, type) {
                 // ------------------------
                 if (data.source === "ku") {
                     const map = {
-                        [hwConfig.ku.sides.a.serial]: "a",
-                        [hwConfig.ku.sides.b.serial]: "b"
+                        [getKuSideSerial("a")]: "a",
+                        [getKuSideSerial("b")]: "b"
                     };
                     const side = map[sideKey] || sideKey;
 
@@ -2924,7 +4285,7 @@ function parseProgramLine(line) {
 // KU: parse ID lines
 // ----------------------------
 function parseKuID(line) {
-    const dnaRegex = new RegExp(`\\((${hwConfig.ku.sides.a.serial}|${hwConfig.ku.sides.b.serial})\\).*FUSE_DNA\\s*=\\s*([0-9A-F]+)`, "i");
+    const dnaRegex = new RegExp(`\\((${getKuSideSerial("a")}|${getKuSideSerial("b")})\\).*FUSE_DNA\\s*=\\s*([0-9A-F]+)`, "i");
     const match = line.match(dnaRegex);
 
     if (!match) return;
@@ -2932,10 +4293,10 @@ function parseKuID(line) {
     const serial = match[1];
     const dna = match[2];
 
-    if (serial === hwConfig.ku.sides.a.serial) {
+    if (serial === getKuSideSerial("a")) {
         document.getElementById("ku_side_a_dna").innerText = dna;
     }
-    if (serial === hwConfig.ku.sides.b.serial) {
+    if (serial === getKuSideSerial("b")) {
         document.getElementById("ku_side_b_dna").innerText = dna;
     }
 
@@ -2948,15 +4309,15 @@ function parseKuID(line) {
 // KU: parse verify lines
 // ----------------------------
 function parseKuVerify(line) {
-    const dnaRegex = new RegExp(`\\((${hwConfig.ku.sides.a.serial}|${hwConfig.ku.sides.b.serial})\\).*FUSE_DNA\\s*=\\s*([0-9A-F]+)`, "i");
-    const resultRegex = new RegExp(`\\((${hwConfig.ku.sides.a.serial}|${hwConfig.ku.sides.b.serial})\\)\\s+Tile Operation\\s+(Success|Failure)!`, "i");
+    const dnaRegex = new RegExp(`\\((${getKuSideSerial("a")}|${getKuSideSerial("b")})\\).*FUSE_DNA\\s*=\\s*([0-9A-F]+)`, "i");
+    const resultRegex = new RegExp(`\\((${getKuSideSerial("a")}|${getKuSideSerial("b")})\\)\\s+Tile Operation\\s+(Success|Failure)!`, "i");
     let match;
 
     if ((match = line.match(dnaRegex))) {
         const serial = match[1];
         const dna = match[2];
-        if (serial === hwConfig.ku.sides.a.serial) document.getElementById("ku_verify_side_a_id").innerText = dna;
-        if (serial === hwConfig.ku.sides.b.serial) document.getElementById("ku_verify_side_b_id").innerText = dna;
+        if (serial === getKuSideSerial("a")) document.getElementById("ku_verify_side_a_id").innerText = dna;
+        if (serial === getKuSideSerial("b")) document.getElementById("ku_verify_side_b_id").innerText = dna;
     }
 
     if ((match = line.match(resultRegex))) {
@@ -2970,11 +4331,11 @@ function updateKuVerify(serial, passed) {
     const statusText = passed ? "Passed" : "FAILED!";
     const className = passed ? "passed" : "failed";
 
-    if (serial === hwConfig.ku.sides.a.serial) {
+    if (serial === getKuSideSerial("a")) {
         document.getElementById("ku_verify_side_a_status").innerText = statusText;
         document.getElementById("ku_verify_side_a_status").className = className;
     }
-    if (serial === hwConfig.ku.sides.b.serial) {
+    if (serial === getKuSideSerial("b")) {
         document.getElementById("ku_verify_side_b_status").innerText = statusText;
         document.getElementById("ku_verify_side_b_status").className = className;
     }
@@ -2984,15 +4345,15 @@ function updateKuVerify(serial, passed) {
 // KU: parse program lines
 // ----------------------------
 function parseKuProgram(line) {
-    const dnaRegex = new RegExp(`\\((${hwConfig.ku.sides.a.serial}|${hwConfig.ku.sides.b.serial})\\).*FUSE_DNA\\s*=\\s*([0-9A-F]+)`, "i");
-    const resultRegex = new RegExp(`\\((${hwConfig.ku.sides.a.serial}|${hwConfig.ku.sides.b.serial})\\)\\s+Tile Operation\\s+(Success|Failure)!`, "i");
+    const dnaRegex = new RegExp(`\\((${getKuSideSerial("a")}|${getKuSideSerial("b")})\\).*FUSE_DNA\\s*=\\s*([0-9A-F]+)`, "i");
+    const resultRegex = new RegExp(`\\((${getKuSideSerial("a")}|${getKuSideSerial("b")})\\)\\s+Tile Operation\\s+(Success|Failure)!`, "i");
     let match;
 
     if ((match = line.match(dnaRegex))) {
         const serial = match[1];
         const dna = match[2];
-        if (serial === hwConfig.ku.sides.a.serial) document.getElementById("ku_program_side_a_id").innerText = dna;
-        if (serial === hwConfig.ku.sides.b.serial) document.getElementById("ku_program_side_b_id").innerText = dna;
+        if (serial === getKuSideSerial("a")) document.getElementById("ku_program_side_a_id").innerText = dna;
+        if (serial === getKuSideSerial("b")) document.getElementById("ku_program_side_b_id").innerText = dna;
     }
 
     if ((match = line.match(resultRegex))) {
@@ -3006,11 +4367,11 @@ function updateKuProgramStatus(serial, passed) {
     const statusText = passed ? "Programmed" : "FAILED!";
     const className = passed ? "passed" : "failed";
 
-    if (serial === hwConfig.ku.sides.a.serial) {
+    if (serial === getKuSideSerial("a")) {
         document.getElementById("ku_program_side_a_status").innerText = statusText;
         document.getElementById("ku_program_side_a_status").className = className;
     }
-    if (serial === hwConfig.ku.sides.b.serial) {
+    if (serial === getKuSideSerial("b")) {
         document.getElementById("ku_program_side_b_status").innerText = statusText;
         document.getElementById("ku_program_side_b_status").className = className;
     }
@@ -3020,15 +4381,15 @@ function updateKuProgramStatus(serial, passed) {
 // KU: parse flash program lines
 // ----------------------------
 function parseKuFlashProgram(line) {
-    const dnaRegex = new RegExp(`\\((${hwConfig.ku.sides.a.serial}|${hwConfig.ku.sides.b.serial})\\).*FUSE_DNA\\s*=\\s*([0-9A-F]+)`, "i");
-    const resultRegex = new RegExp(`\\((${hwConfig.ku.sides.a.serial}|${hwConfig.ku.sides.b.serial})\\)\\s+Tile Operation\\s+(Success|Failure)!`, "i");
+    const dnaRegex = new RegExp(`\\((${getKuSideSerial("a")}|${getKuSideSerial("b")})\\).*FUSE_DNA\\s*=\\s*([0-9A-F]+)`, "i");
+    const resultRegex = new RegExp(`\\((${getKuSideSerial("a")}|${getKuSideSerial("b")})\\)\\s+Tile Operation\\s+(Success|Failure)!`, "i");
     let match;
 
     if ((match = line.match(dnaRegex))) {
         const serial = match[1];
         const dna = match[2];
-        if (serial === hwConfig.ku.sides.a.serial) document.getElementById("ku_flash_side_a_id").innerText = dna;
-        if (serial === hwConfig.ku.sides.b.serial) document.getElementById("ku_flash_side_b_id").innerText = dna;
+        if (serial === getKuSideSerial("a")) document.getElementById("ku_flash_side_a_id").innerText = dna;
+        if (serial === getKuSideSerial("b")) document.getElementById("ku_flash_side_b_id").innerText = dna;
     }
 
     if ((match = line.match(resultRegex))) {
@@ -3042,11 +4403,11 @@ function updateKuFlashStatus(serial, passed) {
     const statusText = passed ? "Programmed" : "FAILED!";
     const className = passed ? "passed" : "failed";
 
-    if (serial === hwConfig.ku.sides.a.serial) {
+    if (serial === getKuSideSerial("a")) {
         document.getElementById("ku_flash_side_a_status").innerText = statusText;
         document.getElementById("ku_flash_side_a_status").className = className;
     }
-    if (serial === hwConfig.ku.sides.b.serial) {
+    if (serial === getKuSideSerial("b")) {
         document.getElementById("ku_flash_side_b_status").innerText = statusText;
         document.getElementById("ku_flash_side_b_status").className = className;
     }
@@ -3056,15 +4417,15 @@ function updateKuFlashStatus(serial, passed) {
 // KU: parse flash erase lines
 // ----------------------------
 function parseKuFlashErase(line) {
-    const dnaRegex = new RegExp(`\\((${hwConfig.ku.sides.a.serial}|${hwConfig.ku.sides.b.serial})\\).*FUSE_DNA\\s*=\\s*([0-9A-F]+)`, "i");
-    const resultRegex = new RegExp(`\\((${hwConfig.ku.sides.a.serial}|${hwConfig.ku.sides.b.serial})\\)\\s+Tile Operation\\s+(Success|Failure)!`, "i");
+    const dnaRegex = new RegExp(`\\((${getKuSideSerial("a")}|${getKuSideSerial("b")})\\).*FUSE_DNA\\s*=\\s*([0-9A-F]+)`, "i");
+    const resultRegex = new RegExp(`\\((${getKuSideSerial("a")}|${getKuSideSerial("b")})\\)\\s+Tile Operation\\s+(Success|Failure)!`, "i");
     let match;
 
     if ((match = line.match(dnaRegex))) {
         const serial = match[1];
         const dna = match[2];
-        if (serial === hwConfig.ku.sides.a.serial) document.getElementById("ku_erase_side_a_id").innerText = dna;
-        if (serial === hwConfig.ku.sides.b.serial) document.getElementById("ku_erase_side_b_id").innerText = dna;
+        if (serial === getKuSideSerial("a")) document.getElementById("ku_erase_side_a_id").innerText = dna;
+        if (serial === getKuSideSerial("b")) document.getElementById("ku_erase_side_b_id").innerText = dna;
     }
 
     if ((match = line.match(resultRegex))) {
@@ -3078,11 +4439,11 @@ function updateKuEraseStatus(serial, passed) {
     const statusText = passed ? "Erased" : "FAILED!";
     const className = passed ? "passed" : "failed";
 
-    if (serial === hwConfig.ku.sides.a.serial) {
+    if (serial === getKuSideSerial("a")) {
         document.getElementById("ku_erase_side_a_status").innerText = statusText;
         document.getElementById("ku_erase_side_a_status").className = className;
     }
-    if (serial === hwConfig.ku.sides.b.serial) {
+    if (serial === getKuSideSerial("b")) {
         document.getElementById("ku_erase_side_b_status").innerText = statusText;
         document.getElementById("ku_erase_side_b_status").className = className;
     }
@@ -3092,15 +4453,15 @@ function updateKuEraseStatus(serial, passed) {
 // KU: parse flash blank-check lines
 // ----------------------------
 function parseKuFlashBlank(line) {
-    const dnaRegex = new RegExp(`\\((${hwConfig.ku.sides.a.serial}|${hwConfig.ku.sides.b.serial})\\).*FUSE_DNA\\s*=\\s*([0-9A-F]+)`, "i");
-    const resultRegex = new RegExp(`\\((${hwConfig.ku.sides.a.serial}|${hwConfig.ku.sides.b.serial})\\)\\s+Tile Operation\\s+(Success|Failure)!`, "i");
+    const dnaRegex = new RegExp(`\\((${getKuSideSerial("a")}|${getKuSideSerial("b")})\\).*FUSE_DNA\\s*=\\s*([0-9A-F]+)`, "i");
+    const resultRegex = new RegExp(`\\((${getKuSideSerial("a")}|${getKuSideSerial("b")})\\)\\s+Tile Operation\\s+(Success|Failure)!`, "i");
     let match;
 
     if ((match = line.match(dnaRegex))) {
         const serial = match[1];
         const dna = match[2];
-        if (serial === hwConfig.ku.sides.a.serial) document.getElementById("ku_blank_side_a_id").innerText = dna;
-        if (serial === hwConfig.ku.sides.b.serial) document.getElementById("ku_blank_side_b_id").innerText = dna;
+        if (serial === getKuSideSerial("a")) document.getElementById("ku_blank_side_a_id").innerText = dna;
+        if (serial === getKuSideSerial("b")) document.getElementById("ku_blank_side_b_id").innerText = dna;
     }
 
     if ((match = line.match(resultRegex))) {
@@ -3114,11 +4475,11 @@ function updateKuBlankStatus(serial, passed) {
     const statusText = passed ? "Blank" : "FAILED!";
     const className = passed ? "passed" : "failed";
 
-    if (serial === hwConfig.ku.sides.a.serial) {
+    if (serial === getKuSideSerial("a")) {
         document.getElementById("ku_blank_side_a_status").innerText = statusText;
         document.getElementById("ku_blank_side_a_status").className = className;
     }
-    if (serial === hwConfig.ku.sides.b.serial) {
+    if (serial === getKuSideSerial("b")) {
         document.getElementById("ku_blank_side_b_status").innerText = statusText;
         document.getElementById("ku_blank_side_b_status").className = className;
     }

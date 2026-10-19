@@ -131,6 +131,235 @@ h1 {
     flex-wrap: wrap;
 }
 
+.ku-advanced-settings-btn {
+    width: 34px;
+    min-width: 34px;
+    height: 34px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid #388bfd;
+    border-radius: 8px;
+    background: rgba(56, 139, 253, 0.12);
+    color: #79c0ff;
+    cursor: pointer;
+}
+
+.ku-advanced-settings-btn svg {
+    width: 18px;
+    height: 18px;
+    fill: currentColor;
+}
+
+.ku-advanced-settings-btn:hover:not(:disabled) {
+    background: rgba(56, 139, 253, 0.22);
+    color: #ffffff;
+}
+
+.ku-advanced-settings-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.ku-advanced-dialog {
+    width: min(920px, 100%);
+    max-height: min(90vh, 900px);
+    overflow: auto;
+}
+
+.ku-advanced-dialog-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 8px;
+}
+
+.ku-advanced-dialog-header h3 {
+    margin: 0;
+}
+
+.ku-advanced-close-btn {
+    width: 32px;
+    min-width: 32px;
+    height: 32px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.04);
+    color: #c9d1d9;
+    font-size: 1.2rem;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.ku-advanced-close-btn:hover {
+    border-color: #f85149;
+    color: #ff7b72;
+}
+
+.ku-advanced-body {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.ku-advanced-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.ku-advanced-label {
+    font-size: 0.75rem;
+    color: #8b949e;
+    white-space: nowrap;
+}
+
+.ku-cable-enable-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.75rem;
+    color: #c9d1d9;
+    white-space: nowrap;
+    user-select: none;
+}
+
+.ku-cable-enable-label input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    accent-color: #58a6ff;
+}
+
+.ku-fw-select.is-cable-disabled {
+    opacity: 0.45;
+}
+
+.ku-advanced-hint {
+    font-size: 0.7rem;
+    color: #8b949e;
+}
+
+.ku-advanced-path {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.7rem;
+    color: #c9d1d9;
+    max-width: 480px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ku-advanced-status {
+    margin: 0;
+    font-size: 0.75rem;
+    color: var(--accent);
+    min-height: 1em;
+}
+
+.ku-advanced-status.is-error {
+    color: #f85149;
+}
+
+#ku-advanced-modal .ku-fw-select {
+    min-width: 140px;
+    max-width: 240px;
+}
+
+#ku-advanced-modal .db-edit-btn,
+#ku-advanced-modal .db-save-btn {
+    width: auto;
+    padding: 4px 10px;
+    font-size: 0.72rem;
+    white-space: nowrap;
+}
+
+.ku-advanced-config {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    border-top: 1px solid var(--border);
+    padding-top: 8px;
+}
+
+.ku-advanced-services {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    border-top: 1px solid var(--border);
+    padding-top: 8px;
+}
+
+.ku-proc-status-line {
+    margin: 0;
+    font-size: 0.7rem;
+    color: #8b949e;
+    font-family: "JetBrains Mono", monospace;
+}
+
+.ku-advanced-git {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.ku-git-commit-select {
+    width: 100%;
+    min-width: 0 !important;
+    max-width: none !important;
+    height: auto;
+    min-height: 9.5rem;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.7rem;
+    line-height: 1.35;
+    padding: 4px;
+}
+
+.ku-git-commit-select option.is-git-head {
+    font-weight: 700;
+    color: #79c0ff;
+}
+
+.ku-git-dirty-hint {
+    margin: 0;
+    font-size: 0.7rem;
+    color: #d29922;
+    white-space: pre-wrap;
+}
+
+.ku-hw-config-editor {
+    width: 100%;
+    min-height: 220px;
+    max-height: 360px;
+    resize: vertical;
+    box-sizing: border-box;
+    border: 1px solid #388bfd;
+    border-radius: 6px;
+    background: #0d1117;
+    color: #e6edf3;
+    color-scheme: dark;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.72rem;
+    line-height: 1.35;
+    padding: 8px;
+}
+
+.ku-hw-config-editor:disabled,
+.ku-hw-config-editor[readonly] {
+    border-color: var(--border);
+    color: #8b949e;
+    opacity: 0.9;
+}
+
+.ku-hw-config-editor.is-editing {
+    border-color: #d29922;
+    box-shadow: 0 0 0 2px rgba(210, 153, 34, 0.25);
+    color: #e6edf3;
+}
+
 .ku-fw-controls .db-edit-btn,
 .ku-fw-controls .db-save-btn {
     width: auto;
@@ -144,22 +373,93 @@ h1 {
     color: var(--accent);
 }
 
+.ku-fw-select-wrap {
+    display: inline-flex;
+    align-items: stretch;
+    gap: 0;
+    max-width: 280px;
+}
+
 .ku-fw-select,
 #ku-fw-upload-tag,
-#ku-fw-upload-files {
+#ku-fw-upload-files,
+#type-confirm-input {
     box-sizing: border-box;
-    border: 1px solid var(--border);
+    border: 1px solid #388bfd;
     border-radius: 6px;
-    background: rgba(0, 0, 0, 0.25);
-    color: var(--text);
+    background: #0d1117;
+    color: #e6edf3;
+    color-scheme: dark;
     padding: 4px 8px;
     font-size: 0.75rem;
+}
+
+.ku-fw-select {
+    appearance: none;
+    -webkit-appearance: none;
+    background-image:
+        linear-gradient(45deg, transparent 50%, #58a6ff 50%),
+        linear-gradient(135deg, #58a6ff 50%, transparent 50%);
+    background-position:
+        calc(100% - 14px) calc(50% - 2px),
+        calc(100% - 9px) calc(50% - 2px);
+    background-size: 5px 5px, 5px 5px;
+    background-repeat: no-repeat;
+    background-color: #0d1117;
+    padding-right: 24px;
+}
+
+.ku-fw-select:focus,
+#ku-fw-upload-tag:focus,
+#ku-fw-upload-files:focus,
+#type-confirm-input:focus {
+    outline: none;
+    border-color: #79c0ff;
+    box-shadow: 0 0 0 3px rgba(56, 139, 253, 0.35);
+}
+
+.ku-fw-select option {
+    background-color: #161b22;
+    color: #e6edf3;
+}
+
+.ku-fw-select option:checked,
+.ku-fw-select option:hover,
+.ku-fw-select option:focus {
+    background-color: #1f6feb;
+    color: #ffffff;
 }
 
 .ku-fw-controls .ku-fw-select {
     width: auto;
     min-width: 160px;
     max-width: 240px;
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+    border-right: none;
+}
+
+.ku-fw-delete-btn {
+    width: 28px;
+    min-width: 28px;
+    padding: 0;
+    border: 1px solid #f85149;
+    border-radius: 0 6px 6px 0;
+    background: #3d1214;
+    color: #ff7b72;
+    font-size: 1rem;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.ku-fw-delete-btn:hover:not(:disabled) {
+    background: #6e1a1f;
+    color: #ffffff;
+}
+
+.ku-fw-delete-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
 }
 
 .ku-fw-upload-preview {
@@ -175,14 +475,41 @@ h1 {
     font-size: 0.8rem;
 }
 
-#ku-fw-upload-modal .dna-choice-dialog {
+#ku-fw-upload-modal .dna-choice-dialog,
+#type-confirm-modal {
+    z-index: 10050;
+}
+
+.type-confirm-dialog {
     display: flex;
     flex-direction: column;
     gap: 8px;
 }
 
+.type-confirm-banner {
+    margin: 0;
+    padding: 8px 10px;
+    border: 1px solid rgba(248, 81, 73, 0.7);
+    border-radius: 6px;
+    background: rgba(248, 81, 73, 0.12);
+    color: #ff7b72;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-align: center;
+}
+
+.type-confirm-ok-btn {
+    background: #da3633 !important;
+    border-color: #f85149 !important;
+}
+
+.type-confirm-ok-btn:disabled {
+    opacity: 0.5;
+}
+
 #ku-fw-upload-files,
-#ku-fw-upload-tag {
+#ku-fw-upload-tag,
+#type-confirm-input {
     width: 100%;
 }
 

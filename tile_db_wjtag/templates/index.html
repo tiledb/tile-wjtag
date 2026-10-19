@@ -33,9 +33,10 @@
         <div class="dna-choice-dialog" role="dialog" aria-modal="true" aria-labelledby="ku-fw-upload-title">
             <h3 id="ku-fw-upload-title">Upload KU firmware</h3>
             <p class="dna-choice-message">
-                Select the three files with the same base name
-                (<code>.bit</code>, <code>.bin</code>, <code>.ltx</code>) and enter a tag
-                that will be appended before the extension.
+                Prefer the full set with the same base name
+                (<code>.bit</code>, <code>.bin</code>, <code>.ltx</code>).
+                A <code>.bin</code>-only upload is allowed for flash ops, but requires an extra confirmation.
+                Enter a tag that will be appended before the extension.
             </p>
             <label class="ku-fw-modal-label" for="ku-fw-upload-files">Firmware files</label>
             <input
@@ -57,6 +58,152 @@
             <div class="dna-choice-actions">
                 <button type="button" id="ku-fw-upload-cancel" class="db-edit-btn">Cancel</button>
                 <button type="button" id="ku-fw-upload-confirm" class="db-save-btn">Upload</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="type-confirm-modal" class="dna-choice-modal" hidden>
+        <div class="dna-choice-dialog type-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="type-confirm-title">
+            <h3 id="type-confirm-title">Confirm</h3>
+            <p id="type-confirm-banner" class="type-confirm-banner" hidden>IRREVERSIBLE!!!</p>
+            <p id="type-confirm-message" class="dna-choice-message"></p>
+            <label class="ku-fw-modal-label" for="type-confirm-input">
+                Type <code id="type-confirm-phrase"></code> to confirm
+            </label>
+            <input
+                id="type-confirm-input"
+                type="text"
+                autocomplete="off"
+                spellcheck="false"
+            >
+            <p id="type-confirm-error" class="ku-fw-upload-error" hidden></p>
+            <div class="dna-choice-actions">
+                <button type="button" id="type-confirm-cancel" class="db-edit-btn">Cancel</button>
+                <button type="button" id="type-confirm-ok" class="db-save-btn type-confirm-ok-btn">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="ku-advanced-modal" class="dna-choice-modal" hidden>
+        <div class="dna-choice-dialog ku-advanced-dialog" role="dialog" aria-modal="true" aria-labelledby="ku-advanced-title">
+            <div class="ku-advanced-dialog-header">
+                <h3 id="ku-advanced-title">Advanced options</h3>
+                <button type="button" id="ku-advanced-close-btn" class="ku-advanced-close-btn" aria-label="Close advanced options">&times;</button>
+            </div>
+            <div class="ku-advanced-body">
+                <div class="ku-advanced-row">
+                    <label class="ku-advanced-label" for="ku-jtag-freq-select">JTAG speed</label>
+                    <select id="ku-jtag-freq-select" class="ku-fw-select" disabled></select>
+                    <span class="ku-advanced-hint">persistent (saved to hw_config)</span>
+                </div>
+                <div class="ku-advanced-row">
+                    <label class="ku-cable-enable-label" for="ku-cable-a-enable">
+                        <input type="checkbox" id="ku-cable-a-enable" checked disabled>
+                        Cable A
+                    </label>
+                    <select id="ku-cable-a-select" class="ku-fw-select" disabled></select>
+                    <label class="ku-cable-enable-label" for="ku-cable-b-enable">
+                        <input type="checkbox" id="ku-cable-b-enable" checked disabled>
+                        Cable B
+                    </label>
+                    <select id="ku-cable-b-select" class="ku-fw-select" disabled></select>
+                    <button type="button" id="ku-cables-refresh-btn" class="db-edit-btn" disabled>
+                        Refresh cables
+                    </button>
+                    <button type="button" id="ku-session-defaults-btn" class="db-edit-btn" disabled>
+                        Force default
+                    </button>
+                    <span class="ku-advanced-hint">session only — untick a side to skip it; Force default restores both cables</span>
+                </div>
+                <div class="ku-advanced-config">
+                    <div class="ku-advanced-row">
+                        <span class="ku-advanced-label">hw_config.json</span>
+                        <code id="ku-hw-config-path" class="ku-advanced-path">---</code>
+                        <button type="button" id="ku-hw-config-edit-btn" class="db-edit-btn" disabled>
+                            Edit file
+                        </button>
+                        <button type="button" id="ku-hw-config-save-btn" class="db-save-btn" hidden disabled>
+                            Save file
+                        </button>
+                        <button type="button" id="ku-hw-config-cancel-btn" class="db-edit-btn" hidden disabled>
+                            Cancel
+                        </button>
+                        <span class="ku-advanced-hint">edit locks with Global after 60s idle</span>
+                    </div>
+                    <textarea
+                        id="ku-hw-config-editor"
+                        class="ku-hw-config-editor"
+                        spellcheck="false"
+                        readonly
+                        disabled
+                    ></textarea>
+                </div>
+                <div class="ku-advanced-services">
+                    <div class="ku-advanced-row">
+                        <span class="ku-advanced-label">Services</span>
+                        <button type="button" id="ku-restart-hwserver-btn" class="db-edit-btn" disabled>
+                            Restart hwserver-aux
+                        </button>
+                        <button type="button" id="ku-restart-tile-wjtag-btn" class="db-edit-btn" disabled>
+                            Restart tile-wjtag
+                        </button>
+                        <span class="ku-advanced-hint">via local service panel</span>
+                    </div>
+                    <div class="ku-advanced-row">
+                        <span class="ku-advanced-label">Kill process</span>
+                        <button type="button" id="ku-kill-vivado_lab-btn" class="db-edit-btn ku-kill-proc-btn" data-proc="vivado_lab" disabled>
+                            vivado_lab
+                        </button>
+                        <button type="button" id="ku-kill-cs_server-btn" class="db-edit-btn ku-kill-proc-btn" data-proc="cs_server" disabled>
+                            cs_server
+                        </button>
+                        <button type="button" id="ku-kill-FPExpress_bin-btn" class="db-edit-btn ku-kill-proc-btn" data-proc="FPExpress_bin" disabled>
+                            FPExpress_bin
+                        </button>
+                        <button type="button" id="ku-proc-refresh-btn" class="db-edit-btn" disabled>
+                            Refresh counts
+                        </button>
+                        <span class="ku-advanced-hint">same targets as Refresh Processes, one at a time</span>
+                    </div>
+                    <p id="ku-proc-status-line" class="ku-proc-status-line">---</p>
+                </div>
+                <p id="ku-advanced-status" class="ku-advanced-status"></p>
+            </div>
+            <div class="dna-choice-actions">
+                <button type="button" id="ku-advanced-done-btn" class="db-save-btn">Done</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="ku-git-modal" class="dna-choice-modal" hidden>
+        <div class="dna-choice-dialog ku-advanced-dialog" role="dialog" aria-modal="true" aria-labelledby="ku-git-title">
+            <div class="ku-advanced-dialog-header">
+                <h3 id="ku-git-title">Git manager</h3>
+                <button type="button" id="ku-git-close-btn" class="ku-advanced-close-btn" aria-label="Close git manager">&times;</button>
+            </div>
+            <div class="ku-advanced-body">
+                <div class="ku-advanced-git">
+                    <div class="ku-advanced-row">
+                        <span class="ku-advanced-label">Status</span>
+                        <code id="ku-git-status-line" class="ku-advanced-path">---</code>
+                        <button type="button" id="ku-git-refresh-btn" class="db-edit-btn" disabled>
+                            Refresh
+                        </button>
+                        <button type="button" id="ku-git-update-btn" class="db-save-btn" disabled>
+                            Update to selected
+                        </button>
+                        <button type="button" id="ku-git-restart-btn" class="db-edit-btn" disabled>
+                            Restart tile-wjtag
+                        </button>
+                        <span class="ku-advanced-hint">fetch + checkout selected commit; conflicts need type confirm “force git”</span>
+                    </div>
+                    <select id="ku-git-commit-select" class="ku-fw-select ku-git-commit-select" size="10" disabled></select>
+                    <p id="ku-git-dirty-hint" class="ku-git-dirty-hint" hidden></p>
+                </div>
+                <p id="ku-git-status" class="ku-advanced-status"></p>
+            </div>
+            <div class="dna-choice-actions">
+                <button type="button" id="ku-git-done-btn" class="db-save-btn">Done</button>
             </div>
         </div>
     </div>
@@ -94,6 +241,32 @@
                 <span id="daughterboard-data-status" class="daughterboard-status">No matched daughterboard</span>
                 <div class="daughterboard-global-lock">
                     <span id="db-edit-idle-countdown" class="db-edit-idle-countdown" hidden></span>
+                    <button
+                        type="button"
+                        id="ku-advanced-settings-btn"
+                        class="ku-advanced-settings-btn"
+                        hidden
+                        disabled
+                        title="Advanced options"
+                        aria-label="Open advanced options"
+                    >
+                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                            <path d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.03 7.03 0 0 0-1.63-.94l-.36-2.54A.5.5 0 0 0 13.9 2h-3.8a.5.5 0 0 0-.49.42l-.36 2.54c-.59.24-1.13.55-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.48a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94L2.83 14.58a.5.5 0 0 0-.12.64l1.92 3.32c.14.24.43.34.68.22l2.39-.96c.5.39 1.04.7 1.63.94l.36 2.54c.05.24.25.42.49.42h3.8c.24 0 .44-.18.49-.42l.36-2.54c.59-.24 1.13-.55 1.63-.94l2.39.96c.25.12.54.02.68-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z"/>
+                        </svg>
+                    </button>
+                    <button
+                        type="button"
+                        id="ku-git-settings-btn"
+                        class="ku-advanced-settings-btn"
+                        hidden
+                        disabled
+                        title="Git manager"
+                        aria-label="Open git manager"
+                    >
+                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                            <path d="M21.07 10.36L13.64 2.93a2.5 2.5 0 0 0-3.54 0L2.93 10.1a2.5 2.5 0 0 0 0 3.54l7.43 7.43a2.5 2.5 0 0 0 3.54 0l7.17-7.17a2.5 2.5 0 0 0 0-3.54zM9.5 8.75a1.75 1.75 0 1 1 0 3.5 1.75 1.75 0 0 1 0-3.5zm3.25 8.5a1.75 1.75 0 1 1 0-3.5 1.75 1.75 0 0 1 0 3.5zm2.75-5.5a1.75 1.75 0 1 1 0-3.5 1.75 1.75 0 0 1 0 3.5z"/>
+                        </svg>
+                    </button>
                     <button type="button" id="db-global-edit-btn" class="db-edit-btn locked" disabled>
                         Global: Locked
                     </button>
@@ -136,9 +309,19 @@
                 <div id="ku-fw-panel" class="ku-fw-controls is-locked">
                     <button type="button" id="ku-fw-download-btn" class="db-edit-btn" disabled>Download current FW</button>
                     <button type="button" id="ku-fw-upload-btn" class="db-save-btn" disabled>Upload FW files</button>
-                    <select id="ku-fw-set-select" class="ku-fw-select" disabled title="Active firmware set">
-                        <option value="">Loading...</option>
-                    </select>
+                    <div class="ku-fw-select-wrap">
+                        <select id="ku-fw-set-select" class="ku-fw-select" disabled title="Active firmware set">
+                            <option value="">Loading...</option>
+                        </select>
+                        <button
+                            type="button"
+                            id="ku-fw-delete-btn"
+                            class="ku-fw-delete-btn"
+                            disabled
+                            title="Delete selected firmware set"
+                            aria-label="Delete selected firmware set"
+                        >&times;</button>
+                    </div>
                 </div>
             </h2>
 

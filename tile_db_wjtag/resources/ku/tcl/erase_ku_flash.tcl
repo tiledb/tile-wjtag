@@ -6,6 +6,8 @@ puts "=== Starting KU Flash Memory Erase ==="
 
 package require json
 
+source [file join [file dirname [info script]] ku_jtag_utils.tcl]
+
 # Get and print current working directory
 set current_dir [pwd]
 puts "=== Execution Directory: $current_dir ==="
@@ -21,28 +23,27 @@ close $fp
 set data [json::json2dict $file_data]
 
 set programmers {}
+set jtag_freq_hz 0
 
 # Check if current host exists in config
 if {[dict exists $data $hostname]} {
+    set jtag_freq_hz [ku_read_jtag_freq_hz $data $hostname]
     set ku_sides [dict get $data $hostname ku sides]
 
     # Iterate through sides (a, b, etc.)
     dict for {side info} $ku_sides {
-        # Construct the internal list format used by your loop
-        lappend programmers [list \
-            hw_server [dict get $info hw_server] \
-            target    [dict get $info target] \
-            id        [dict get $info serial] \
-            device    [dict get $info device] \
-            bitfile   [dict get $info bitfile] \
-            binfile   [dict get $info binfile] \
-            ltxfile   [dict get $info ltxfile] \
-        ]
+        if {![ku_side_enabled $side]} {
+            puts "=== Skipping side $side (disabled for this session) ==="
+            continue
+        }
+        lappend programmers [ku_programmer_from_side $side $info]
     }
 } else {
     puts "Error: No configuration found for host $hostname"
     exit 1
 }
+
+puts "=== KU jtag_freq_hz from hw_config: $jtag_freq_hz ==="
 
 puts "=== Selected KU firmware ==="
 foreach p $programmers {
@@ -98,12 +99,14 @@ foreach p $programmers {
     puts "($id) Operation: ERASE"
     puts "($id) =============================================="
 
-    # Open hardware target safely
+    # Set JTAG speed (before open), then open hardware target
+    ku_prepare_jtag_target $target_path $jtag_freq_hz $id
     if {[catch {open_hw_target $target_path -quiet} err]} {
         puts "($id) ERROR: Failed to open target $target_path: $err"
         set error_flag 1
         continue
     }
+    ku_report_jtag_frequency $id
 
     set devices [get_hw_devices]
 
@@ -161,31 +164,34 @@ foreach p $programmers {
         puts "($id) Creating HW config memory for erase..."
         startgroup
         set hw_dev_lindex [lindex [get_hw_devices $d] 0]
-        create_hw_cfgmem -hw_device $hw_dev_lindex [lindex [get_cfgmem_parts {is25lp256d-spi-x1_x2_x4}] 0]
+        if {[catch {
+            create_hw_cfgmem -hw_device $hw_dev_lindex [lindex [get_cfgmem_parts {is25lp256d-spi-x1_x2_x4}] 0]
 
-        set_property PROGRAM.BLANK_CHECK 0 [get_property PROGRAM.HW_CFGMEM $hw_dev_lindex]
-        set_property PROGRAM.ERASE 1 [get_property PROGRAM.HW_CFGMEM $hw_dev_lindex]
-        set_property PROGRAM.CFG_PROGRAM 0 [get_property PROGRAM.HW_CFGMEM $hw_dev_lindex]
-        set_property PROGRAM.VERIFY 0 [get_property PROGRAM.HW_CFGMEM $hw_dev_lindex]
-        set_property PROGRAM.CHECKSUM 0 [get_property PROGRAM.HW_CFGMEM $hw_dev_lindex]
+            set_property PROGRAM.BLANK_CHECK 0 [get_property PROGRAM.HW_CFGMEM $hw_dev_lindex]
+            set_property PROGRAM.ERASE 1 [get_property PROGRAM.HW_CFGMEM $hw_dev_lindex]
+            set_property PROGRAM.CFG_PROGRAM 0 [get_property PROGRAM.HW_CFGMEM $hw_dev_lindex]
+            set_property PROGRAM.VERIFY 0 [get_property PROGRAM.HW_CFGMEM $hw_dev_lindex]
+            set_property PROGRAM.CHECKSUM 0 [get_property PROGRAM.HW_CFGMEM $hw_dev_lindex]
 
-        set_property PROGRAM.ADDRESS_RANGE {entire_device} [get_property PROGRAM.HW_CFGMEM $hw_dev_lindex]
-        set_property PROGRAM.FILES {} [get_property PROGRAM.HW_CFGMEM $hw_dev_lindex]
-        set_property PROGRAM.PRM_FILE {} [get_property PROGRAM.HW_CFGMEM $hw_dev_lindex]
-        set_property PROGRAM.UNUSED_PIN_TERMINATION {pull-none} [get_property PROGRAM.HW_CFGMEM $hw_dev_lindex]
+            set_property PROGRAM.ADDRESS_RANGE {entire_device} [get_property PROGRAM.HW_CFGMEM $hw_dev_lindex]
+            set_property PROGRAM.FILES {} [get_property PROGRAM.HW_CFGMEM $hw_dev_lindex]
+            set_property PROGRAM.PRM_FILE {} [get_property PROGRAM.HW_CFGMEM $hw_dev_lindex]
+            set_property PROGRAM.UNUSED_PIN_TERMINATION {pull-none} [get_property PROGRAM.HW_CFGMEM $hw_dev_lindex]
 
-        create_hw_bitstream -hw_device $hw_dev_lindex [get_property PROGRAM.HW_CFGMEM_BITFILE $hw_dev_lindex]
-        program_hw_devices $hw_dev_lindex
-        refresh_hw_device $hw_dev_lindex
-
-        if {[catch {program_hw_cfgmem -hw_cfgmem [get_property PROGRAM.HW_CFGMEM $hw_dev_lindex]} err]} {
-            puts "($id) WARNING: Flash erase failed but continuing: $err"
+            if {![ku_load_cfgmem_programming_bitstream $id $hw_dev_lindex]} {
+                error "SPI programming bitstream load failed"
+            }
+            program_hw_cfgmem -hw_cfgmem [get_property PROGRAM.HW_CFGMEM $hw_dev_lindex]
+        } err]} {
+            puts "($id) ERROR: Flash erase failed: $err"
             set error_flag 1
         }
         endgroup
-        refresh_hw_device -quiet $hw_dev_lindex
-        close_hw_target $target_path -quiet
-        puts "($id) Target flash erased successfully."
+        catch {refresh_hw_device -quiet $hw_dev_lindex}
+        catch {close_hw_target $target_path -quiet}
+        if {$error_flag == 0} {
+            puts "($id) Target flash erased successfully."
+        }
     }
 
     # Success/failure report

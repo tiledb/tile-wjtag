@@ -3,6 +3,7 @@ import json
 import os
 import pty
 import re
+import shlex
 import signal
 import socket
 import subprocess
@@ -23,7 +24,9 @@ from lib.ku_fw import (
     apply_firmware_set,
     build_firmware_zip,
     current_set_name,
+    delete_firmware_set,
     ku_bin_dir,
+    list_firmware_details,
     list_firmware_sets,
     persist_hw_configs,
     sanitize_tag,
@@ -56,7 +59,10 @@ app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_prefix=1)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(BASE_DIR)
 RESOURCES_FOLDER = os.path.join(BASE_DIR, "resources")
+GIT_FORCE_PHRASE = "force git"
+GIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{7,40}$")
 
 VIVADO_LOG_FOLDER = os.path.join(RESOURCES_FOLDER, "ku/logs/vivado")
 VIVADO_TCL_FOLDER = os.path.join(RESOURCES_FOLDER, "ku/tcl")
@@ -104,8 +110,148 @@ KU_RESULT_PATTERN = re.compile(
     rf"\(({_KU_SERIALS})\) Tile Operation (Success|Failure)!"
 )
 KU_DNA_PATTERN = re.compile(
-    rf"\(({_KU_SERIALS})\).*FUSE_DNA\s*=\s*([0-9A-F]+)"
+    rf"\(({_KU_SERIALS})\).*FUSE_DNA\s*=\s*([0-9A-F]+)",
+    re.I,
 )
+
+# Digilent / Vivado Lab commonly accepted JTAG TCK steps (Hz).
+KU_JTAG_FREQ_CHOICES = (
+    5_000_000,
+    6_000_000,
+    10_000_000,
+    15_000_000,
+    20_000_000,
+    25_000_000,
+    30_000_000,
+    40_000_000,
+    60_000_000,
+)
+
+
+def _parse_bool_arg(value, default=True):
+    if value is None:
+        return default
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _ku_serial_to_side(cable_a=None, cable_b=None, enable_a=True, enable_b=True):
+    """Build serial→side map using config defaults plus optional session overrides."""
+    mapping = {}
+    enabled = {"a": enable_a, "b": enable_b}
+    for side, info in HW_CONFIG.get("ku", {}).get("sides", {}).items():
+        if not enabled.get(side, True):
+            continue
+        serial = (info or {}).get("serial")
+        if side == "a" and cable_a:
+            serial = cable_a
+        elif side == "b" and cable_b:
+            serial = cable_b
+        if serial:
+            mapping[serial] = side.upper()
+    return mapping
+
+
+def _ku_line_patterns(serial_to_side):
+    serials = "|".join(map(re.escape, serial_to_side)) or "___NO_SERIAL___"
+    return (
+        re.compile(rf"\(({serials})\) Tile Operation (Success|Failure)!"),
+        re.compile(rf"\(({serials})\).*FUSE_DNA\s*=\s*([0-9A-F]+)", re.I),
+    )
+
+
+def _parse_cable_serial_from_target(target_path):
+    text = (target_path or "").strip()
+    if not text:
+        return None
+    # localhost:3121/xilinx_tcf/Digilent/<serial>
+    parts = text.split("/")
+    if not parts:
+        return None
+    serial = parts[-1].strip()
+    return serial or None
+
+
+def _list_ku_cables_via_vivado(timeout_s=45):
+    """Open a short Vivado Lab session and list Digilent hw_targets."""
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    log_file = os.path.join(VIVADO_LOG_FOLDER, f"vivado_{timestamp}_list_cables.log")
+    jou_file = os.path.join(VIVADO_LOG_FOLDER, f"vivado_{timestamp}_list_cables.jou")
+    tcl = os.path.join(VIVADO_TCL_FOLDER, "list_ku_cables.tcl")
+
+    hw_server = None
+    try:
+        hw_server = HW_CONFIG["ku"]["sides"]["a"]["hw_server"]
+    except (KeyError, TypeError):
+        hw_server = "localhost:3121"
+
+    command = (
+        f"bash -c 'source {shlex.quote(VIVADO_SETTINGS)} && "
+        f"export KU_HW_SERVER_URL={shlex.quote(hw_server)} && "
+        f"vivado_lab -mode batch -log {shlex.quote(log_file)} "
+        f"-journal {shlex.quote(jou_file)} -source {shlex.quote(tcl)}'"
+    )
+
+    try:
+        completed = subprocess.run(
+            command,
+            shell=True,
+            text=True,
+            capture_output=True,
+            timeout=timeout_s,
+        )
+    except subprocess.TimeoutExpired:
+        return None, f"Vivado cable listing timed out after {timeout_s}s"
+
+    output = "\n".join(
+        part for part in (completed.stdout or "", completed.stderr or "") if part
+    )
+    if completed.returncode != 0 and "CABLE_TARGET:" not in output:
+        # Fall back to log file if PTY-less batch dumped there only.
+        try:
+            with open(log_file, "r", errors="replace") as handle:
+                output = handle.read()
+        except OSError:
+            pass
+
+    cables = []
+    freq_by_target = {}
+    for line in output.splitlines():
+        line = line.strip()
+        if line.startswith("CABLE_FREQ:"):
+            rest = line[len("CABLE_FREQ:"):].strip()
+            parts = rest.rsplit(" ", 1)
+            if len(parts) == 2:
+                freq_by_target[parts[0]] = parts[1]
+            continue
+        if not line.startswith("CABLE_TARGET:"):
+            continue
+        target = line[len("CABLE_TARGET:"):].strip()
+        serial = _parse_cable_serial_from_target(target)
+        if not serial:
+            continue
+        cables.append({
+            "serial": serial,
+            "target": target,
+            "frequency_hz": freq_by_target.get(target),
+        })
+
+    # Attach freqs that arrived after targets in the log.
+    for cable in cables:
+        if cable["frequency_hz"] is None and cable["target"] in freq_by_target:
+            cable["frequency_hz"] = freq_by_target[cable["target"]]
+
+    if not cables and completed.returncode != 0:
+        return None, (
+            f"Vivado cable listing failed (exit {completed.returncode}). "
+            f"See {log_file}"
+        )
+
+    return cables, None
 _PROASIC_PROGRAMMERS = "|".join(map(re.escape, PROASIC_PROG_TO_SIDE))
 PROASIC_RESULT_PATTERN = re.compile(
     r"programmer\s+'([^']+)'.*?\s(PASSED|FAILED)",
@@ -141,6 +287,48 @@ PROASIC_ACTIONS = {
 }
 
 _PROCESS_NAMES_TO_KILL = frozenset({"vivado_lab", "cs_server", "FPExpress_bin"})
+_SERVICE_RESTART_ALLOWLIST = frozenset({"tile-wjtag", "hwserver-aux"})
+
+
+def _count_named_processes():
+    counts = {name: 0 for name in sorted(_PROCESS_NAMES_TO_KILL)}
+    for proc in psutil.process_iter(["pid", "name"]):
+        try:
+            name = proc.info["name"]
+            if name in counts:
+                counts[name] += 1
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    return counts
+
+
+def _kill_named_processes(names):
+    wanted = set(names) & _PROCESS_NAMES_TO_KILL
+    killed = []
+    for proc in psutil.process_iter(["pid", "name"]):
+        try:
+            name = proc.info["name"]
+            if name in wanted:
+                os.kill(proc.info["pid"], signal.SIGTERM)
+                killed.append({"name": name, "pid": proc.info["pid"]})
+        except Exception as e:
+            print(f"Error killing process {proc.info.get('name')}: {e}")
+    return killed
+
+
+def _restart_local_service(service_name):
+    if service_name not in _SERVICE_RESTART_ALLOWLIST:
+        raise ValueError(f"service not allowed: {service_name}")
+    response = requests.post(
+        "http://127.0.0.1:8081/action",
+        data={
+            "service": service_name,
+            "action": "restart",
+        },
+        timeout=5,
+    )
+    response.raise_for_status()
+    return "restarted"
 
 # Prime CPU counter so later reads are non-blocking.
 psutil.cpu_percent()
@@ -152,7 +340,7 @@ print(f"Loaded hardware config for {HOSTNAME}")
 # PROCESS EXECUTION
 # ===============================
 
-def run_process(command, source_type):
+def run_process(command, source_type, ku_serial_to_side=None):
     """
     Executes a process via PTY and streams output for Flask SSE.
     Handles ProASIC and Xilinx KU separately for accurate per-side status.
@@ -173,7 +361,11 @@ def run_process(command, source_type):
     if source_type == "proasic":
         yield from _run_process_proasic(process, master_fd)
     elif source_type == "ku":
-        yield from _run_process_ku(process, master_fd)
+        yield from _run_process_ku(
+            process,
+            master_fd,
+            ku_serial_to_side or KU_SERIAL_TO_SIDE,
+        )
     else:
         yield from _run_process_generic(process, master_fd)
 
@@ -260,16 +452,18 @@ def _maybe_yield_daughterboard_match(registered_sides):
     }
 
 
-def _run_process_ku(process, master_fd):
+def _run_process_ku(process, master_fd, serial_to_side=None):
     side_status = {}
     dna_cache = {}
     registered_sides = {}
     daughterboard_announced = False
+    serial_to_side = serial_to_side or KU_SERIAL_TO_SIDE
+    result_pattern, dna_pattern = _ku_line_patterns(serial_to_side)
 
     for line in _read_pty_lines(process, master_fd):
         yield {"source": "ku", "line": line.strip()}
 
-        dna_match = KU_DNA_PATTERN.search(line)
+        dna_match = dna_pattern.search(line)
         if dna_match:
             serial = dna_match.group(1)
             dna = dna_match.group(2)
@@ -279,7 +473,7 @@ def _run_process_ku(process, master_fd):
             if dna not in dna_cache:
                 dna_cache[dna] = check_dna_in_db(dna)
             db_info = dna_cache[dna]
-            expected_side = KU_SERIAL_TO_SIDE.get(serial)
+            expected_side = serial_to_side.get(serial)
 
             if db_info:
                 db_side = db_info["side"]
@@ -331,11 +525,11 @@ def _run_process_ku(process, master_fd):
                     "dna": dna,
                 }
 
-        result_match = KU_RESULT_PATTERN.search(line)
+        result_match = result_pattern.search(line)
         if result_match:
             serial = result_match.group(1)
             result = result_match.group(2)
-            side = KU_SERIAL_TO_SIDE.get(serial)
+            side = serial_to_side.get(serial)
             if side:
                 side_status[side] = "success" if result == "Success" else "failure"
 
@@ -357,13 +551,32 @@ def _run_process_generic(process, master_fd):
 # COMMAND ROUTING
 # ===============================
 
-def _build_vivado_command(action, timestamp):
+def _build_vivado_command(
+    action,
+    timestamp,
+    cable_a=None,
+    cable_b=None,
+    enable_a=True,
+    enable_b=True,
+):
     log_file = os.path.join(VIVADO_LOG_FOLDER, f"vivado_{timestamp}_{action}.log")
     jou_file = os.path.join(VIVADO_LOG_FOLDER, f"vivado_{timestamp}_{action}.jou")
     tcl = os.path.join(VIVADO_TCL_FOLDER, KU_ACTIONS[action])
+
+    exports = []
+    if cable_a:
+        exports.append(f"export KU_CABLE_OVERRIDE_A={shlex.quote(cable_a)}")
+    if cable_b:
+        exports.append(f"export KU_CABLE_OVERRIDE_B={shlex.quote(cable_b)}")
+    exports.append(f"export KU_CABLE_ENABLE_A={'1' if enable_a else '0'}")
+    exports.append(f"export KU_CABLE_ENABLE_B={'1' if enable_b else '0'}")
+    export_prefix = (" && ".join(exports) + " && ") if exports else ""
+
     return (
-        f"bash -c 'source {VIVADO_SETTINGS} && "
-        f"vivado_lab -mode batch -log {log_file} -journal {jou_file} -source {tcl}'"
+        f"bash -c 'source {shlex.quote(VIVADO_SETTINGS)} && "
+        f"{export_prefix}"
+        f"vivado_lab -mode batch -log {shlex.quote(log_file)} "
+        f"-journal {shlex.quote(jou_file)} -source {shlex.quote(tcl)}'"
     )
 
 
@@ -378,14 +591,30 @@ def _build_fpexpress_command(action, timestamp, tcl_name):
     )
 
 
-def build_command(action):
+def build_command(
+    action,
+    cable_a=None,
+    cable_b=None,
+    enable_a=True,
+    enable_b=True,
+):
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
     if action in KU_ACTIONS:
         if action == "get_ku_properties":
             log_file = os.path.join(VIVADO_LOG_FOLDER, f"vivado_{timestamp}_{action}.log")
             print(f"Log file: {log_file}")
-        return _build_vivado_command(action, timestamp), "ku"
+        return (
+            _build_vivado_command(
+                action,
+                timestamp,
+                cable_a,
+                cable_b,
+                enable_a=enable_a,
+                enable_b=enable_b,
+            ),
+            "ku",
+        )
 
     if action in PROASIC_ACTIONS:
         return _build_fpexpress_command(action, timestamp, PROASIC_ACTIONS[action]), "proasic"
@@ -399,13 +628,36 @@ def build_command(action):
 
 @app.route("/run/<action>")
 def run_action(action):
-    command, source_type = build_command(action)
+    cable_a = (request.args.get("cable_a") or "").strip() or None
+    cable_b = (request.args.get("cable_b") or "").strip() or None
+    enable_a = _parse_bool_arg(request.args.get("enable_a"), True)
+    enable_b = _parse_bool_arg(request.args.get("enable_b"), True)
+
+    if action in PROASIC_ACTIONS and (cable_a or cable_b or "enable_a" in request.args or "enable_b" in request.args):
+        return "Cable overrides are only valid for KU actions", 400
+
+    if action in KU_ACTIONS and not enable_a and not enable_b:
+        return "At least one KU cable must be enabled", 400
+
+    command, source_type = build_command(
+        action,
+        cable_a=cable_a,
+        cable_b=cable_b,
+        enable_a=enable_a,
+        enable_b=enable_b,
+    )
 
     if not command:
         return "Invalid action", 400
 
+    ku_map = (
+        _ku_serial_to_side(cable_a, cable_b, enable_a=enable_a, enable_b=enable_b)
+        if source_type == "ku"
+        else None
+    )
+
     def event_stream():
-        for output in run_process(command, source_type):
+        for output in run_process(command, source_type, ku_serial_to_side=ku_map):
             yield f"data: {json.dumps(output)}\n\n"
 
     return Response(event_stream(), mimetype="text/event-stream")
@@ -424,16 +676,366 @@ def get_hw_config():
     return jsonify(HW_CONFIG)
 
 
-@app.route("/api/ku/firmware", methods=["GET"])
-def api_list_ku_firmware():
+def _reload_runtime_hw_globals():
+    """Refresh in-memory maps after hw_config.json is rewritten."""
+    global HW_CONFIG, KU_SERIAL_TO_SIDE, PROASIC_PROG_TO_SIDE
+    global SIDE_TO_HA_ENTITY, KU_RESULT_PATTERN, KU_DNA_PATTERN, _KU_SERIALS
+
+    HW_CONFIG = ALL_HW_CONFIGS.get(HOSTNAME)
+    if HW_CONFIG is None:
+        raise RuntimeError(f"No hardware config found for hostname: {HOSTNAME}")
+
+    KU_SERIAL_TO_SIDE = {
+        v["serial"]: side.upper() for side, v in HW_CONFIG["ku"]["sides"].items()
+    }
+    PROASIC_PROG_TO_SIDE = {
+        v["programmer"]: side.upper()
+        for side, v in HW_CONFIG["proasic"]["sides"].items()
+    }
+    ha_cfg = HW_CONFIG.get("ha_power_control", {}).get("sides", {})
+    if not isinstance(ha_cfg, dict):
+        raise RuntimeError("Invalid ha_power_control config")
+    SIDE_TO_HA_ENTITY = {
+        side.upper(): entity for side, entity in ha_cfg.items()
+    }
+
+    _KU_SERIALS = "|".join(map(re.escape, KU_SERIAL_TO_SIDE)) or "___NO_SERIAL___"
+    KU_RESULT_PATTERN = re.compile(
+        rf"\(({_KU_SERIALS})\) Tile Operation (Success|Failure)!"
+    )
+    KU_DNA_PATTERN = re.compile(
+        rf"\(({_KU_SERIALS})\).*FUSE_DNA\s*=\s*([0-9A-F]+)",
+        re.I,
+    )
+
+
+@app.route("/api/hw_config/file", methods=["GET"])
+def api_get_hw_config_file():
+    return jsonify({
+        "path": HW_CONFIG_PATH,
+        "hostname": HOSTNAME,
+        "config": ALL_HW_CONFIGS,
+    })
+
+
+@app.route("/api/hw_config/file", methods=["PUT"])
+def api_put_hw_config_file():
+    payload = request.get_json(silent=True) or {}
+    config = payload.get("config")
+    if not isinstance(config, dict) or not config:
+        return jsonify({"error": "config object is required"}), 400
+    if HOSTNAME not in config:
+        return jsonify({
+            "error": f"config must include an entry for this host ({HOSTNAME})",
+        }), 400
+    if not isinstance(config.get(HOSTNAME), dict):
+        return jsonify({"error": f"invalid host config for {HOSTNAME}"}), 400
+    if "ku" not in config[HOSTNAME] or "proasic" not in config[HOSTNAME]:
+        return jsonify({"error": "host config must include ku and proasic"}), 400
+
+    ALL_HW_CONFIGS.clear()
+    ALL_HW_CONFIGS.update(config)
+    try:
+        persist_hw_configs(HW_CONFIG_PATH, ALL_HW_CONFIGS)
+        _reload_runtime_hw_globals()
+    except Exception as exc:
+        return jsonify({"error": f"failed to save hw_config: {exc}"}), 500
+
+    return jsonify({
+        "status": "ok",
+        "path": HW_CONFIG_PATH,
+        "hostname": HOSTNAME,
+        "config": ALL_HW_CONFIGS,
+        "hw_config": HW_CONFIG,
+    })
+
+
+@app.route("/api/ku/advanced", methods=["GET"])
+def api_ku_advanced():
+    sides = HW_CONFIG.get("ku", {}).get("sides", {})
+    return jsonify({
+        "jtag_freq_hz": HW_CONFIG.get("ku", {}).get("jtag_freq_hz") or 15_000_000,
+        "jtag_freq_choices": list(KU_JTAG_FREQ_CHOICES),
+        "default_cables": {
+            "a": (sides.get("a") or {}).get("serial"),
+            "b": (sides.get("b") or {}).get("serial"),
+        },
+        "hw_config_path": HW_CONFIG_PATH,
+        "hostname": HOSTNAME,
+    })
+
+
+def _git_run(args, timeout=60):
+    """Run a git command in the repo root. Returns (ok, stdout, stderr, returncode)."""
+    try:
+        completed = subprocess.run(
+            ["git", *args],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        stdout = (exc.stdout or "") if isinstance(exc.stdout, str) else ""
+        stderr = (exc.stderr or "") if isinstance(exc.stderr, str) else "git command timed out"
+        return False, stdout.strip(), stderr.strip() or "git command timed out", -1
+    except Exception as exc:
+        return False, "", str(exc), -1
+
+    stdout = (completed.stdout or "").strip()
+    stderr = (completed.stderr or "").strip()
+    return completed.returncode == 0, stdout, stderr, completed.returncode
+
+
+def _git_status_payload():
+    ok_head, head, err_head, _ = _git_run(["rev-parse", "HEAD"])
+    ok_short, short, _, _ = _git_run(["rev-parse", "--short", "HEAD"])
+    ok_branch, branch, _, _ = _git_run(["rev-parse", "--abbrev-ref", "HEAD"])
+    ok_upstream, upstream, _, _ = _git_run(
+        ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]
+    )
+    ok_dirty, dirty_out, _, _ = _git_run(["status", "--porcelain"])
+    dirty_files = [line for line in dirty_out.splitlines() if line.strip()] if ok_dirty else []
+
+    ahead = 0
+    behind = 0
+    if ok_upstream and upstream:
+        ok_counts, counts, _, _ = _git_run(
+            ["rev-list", "--left-right", "--count", f"HEAD...{upstream}"]
+        )
+        if ok_counts and counts:
+            parts = counts.split()
+            if len(parts) >= 2:
+                try:
+                    ahead = int(parts[0])
+                    behind = int(parts[1])
+                except ValueError:
+                    ahead = 0
+                    behind = 0
+
+    ok_msg, subject, _, _ = _git_run(["log", "-1", "--pretty=%s"])
+    ok_remote, remote_url, _, _ = _git_run(["remote", "get-url", "origin"])
+
+    return {
+        "repo_root": REPO_ROOT,
+        "head": head if ok_head else None,
+        "head_short": short if ok_short else None,
+        "branch": branch if ok_branch else None,
+        "upstream": upstream if ok_upstream else None,
+        "ahead": ahead,
+        "behind": behind,
+        "dirty": bool(dirty_files),
+        "dirty_count": len(dirty_files),
+        "dirty_files": dirty_files[:40],
+        "subject": subject if ok_msg else "",
+        "remote": remote_url if ok_remote else None,
+        "error": None if ok_head else (err_head or "not a git repository"),
+    }
+
+
+@app.route("/api/git/status", methods=["GET"])
+def api_git_status():
+    payload = _git_status_payload()
+    if payload.get("error"):
+        return jsonify(payload), 500
+    return jsonify(payload)
+
+
+@app.route("/api/git/commits", methods=["GET"])
+def api_git_commits():
+    try:
+        limit = int(request.args.get("limit", 40))
+    except (TypeError, ValueError):
+        limit = 40
+    limit = max(1, min(limit, 100))
+    do_fetch = request.args.get("fetch", "1") not in ("0", "false", "False")
+
+    fetch_error = None
+    if do_fetch:
+        ok_fetch, _, err_fetch, _ = _git_run(["fetch", "--prune", "origin"], timeout=120)
+        if not ok_fetch:
+            fetch_error = err_fetch or "git fetch failed"
+
+    # Prefer origin/<current-branch>, then origin/main, then HEAD.
+    ref_candidates = []
+    ok_branch, branch, _, _ = _git_run(["rev-parse", "--abbrev-ref", "HEAD"])
+    if ok_branch and branch and branch != "HEAD":
+        ref_candidates.append(f"origin/{branch}")
+    ref_candidates.extend(["origin/main", "origin/master", "HEAD"])
+
+    log_ref = "HEAD"
+    for candidate in ref_candidates:
+        ok_ref, _, _, _ = _git_run(["rev-parse", "--verify", candidate])
+        if ok_ref:
+            log_ref = candidate
+            break
+
+    ok_log, log_out, err_log, _ = _git_run(
+        [
+            "log",
+            log_ref,
+            f"-n{limit}",
+            "--pretty=format:%H\t%h\t%ci\t%an\t%s",
+        ]
+    )
+    if not ok_log:
+        return jsonify({"error": err_log or "failed to list commits", "fetch_error": fetch_error}), 500
+
+    status = _git_status_payload()
+    commits = []
+    for line in log_out.splitlines():
+        parts = line.split("\t", 4)
+        if len(parts) < 5:
+            continue
+        full, short, date, author, subject = parts
+        commits.append({
+            "hash": full,
+            "short": short,
+            "date": date,
+            "author": author,
+            "subject": subject,
+            "is_head": full == status.get("head"),
+        })
+
+    return jsonify({
+        "status": "ok",
+        "ref": log_ref,
+        "commits": commits,
+        "git": status,
+        "fetch_error": fetch_error,
+    })
+
+
+@app.route("/api/git/checkout", methods=["POST"])
+def api_git_checkout():
+    payload = request.get_json(silent=True) or {}
+    commit = str(payload.get("commit") or "").strip()
+    force = bool(payload.get("force"))
+    confirm = str(payload.get("confirm_phrase") or "").strip()
+
+    if not commit or not GIT_SHA_RE.match(commit):
+        return jsonify({"error": "commit must be a git SHA (7-40 hex chars)"}), 400
+
+    if force and confirm != GIT_FORCE_PHRASE:
+        return jsonify({
+            "error": f'type "{GIT_FORCE_PHRASE}" to confirm force checkout',
+            "needs_force": True,
+        }), 400
+
+    ok_fetch, _, err_fetch, _ = _git_run(["fetch", "--prune", "origin"], timeout=120)
+    if not ok_fetch:
+        return jsonify({"error": f"git fetch failed: {err_fetch}"}), 500
+
+    ok_rev, resolved, err_rev, _ = _git_run(["rev-parse", "--verify", f"{commit}^{{commit}}"])
+    if not ok_rev:
+        return jsonify({"error": f"unknown commit: {err_rev or commit}"}), 400
+
+    status_before = _git_status_payload()
+    if not force and status_before.get("dirty"):
+        return jsonify({
+            "error": "working tree has local changes; force checkout required",
+            "needs_force": True,
+            "force_phrase": GIT_FORCE_PHRASE,
+            "git": status_before,
+        }), 409
+
+    if not force and status_before.get("head") == resolved:
+        return jsonify({
+            "status": "ok",
+            "message": "already at selected commit",
+            "git": status_before,
+            "restart_recommended": False,
+        })
+
+    reset_args = ["reset", "--hard", resolved]
+    ok_reset, out_reset, err_reset, _ = _git_run(reset_args, timeout=120)
+    if not ok_reset:
+        # Soft path failed (e.g. unexpected lock); tell UI to force.
+        return jsonify({
+            "error": err_reset or out_reset or "git reset failed",
+            "needs_force": True,
+            "force_phrase": GIT_FORCE_PHRASE,
+            "git": _git_status_payload(),
+        }), 409
+
+    if force:
+        # Drop untracked leftovers that would still look dirty after hard reset.
+        _git_run(["clean", "-fd"], timeout=60)
+
+    status_after = _git_status_payload()
+    return jsonify({
+        "status": "ok",
+        "message": (
+            f"{'Force-checked out' if force else 'Checked out'} "
+            f"{status_after.get('head_short') or resolved[:7]}"
+        ),
+        "forced": force,
+        "git": status_after,
+        "restart_recommended": True,
+    })
+
+
+@app.route("/api/ku/jtag_freq", methods=["POST"])
+def api_set_ku_jtag_freq():
+    payload = request.get_json(silent=True) or {}
+    try:
+        freq = int(payload.get("jtag_freq_hz"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "jtag_freq_hz must be an integer"}), 400
+
+    if freq not in KU_JTAG_FREQ_CHOICES:
+        return jsonify({
+            "error": f"unsupported frequency {freq}",
+            "jtag_freq_choices": list(KU_JTAG_FREQ_CHOICES),
+        }), 400
+
+    HW_CONFIG.setdefault("ku", {})["jtag_freq_hz"] = freq
+    ALL_HW_CONFIGS[HOSTNAME] = HW_CONFIG
+    try:
+        persist_hw_configs(HW_CONFIG_PATH, ALL_HW_CONFIGS)
+    except Exception as exc:
+        return jsonify({"error": f"failed to save hw_config: {exc}"}), 500
+
+    return jsonify({
+        "status": "ok",
+        "jtag_freq_hz": freq,
+        "hw_config": HW_CONFIG,
+    })
+
+
+@app.route("/api/ku/cables", methods=["GET"])
+def api_list_ku_cables():
+    cables, error = _list_ku_cables_via_vivado()
+    if error:
+        return jsonify({"error": error, "cables": cables or []}), 500
+
+    sides = HW_CONFIG.get("ku", {}).get("sides", {})
+    return jsonify({
+        "cables": cables,
+        "default_cables": {
+            "a": (sides.get("a") or {}).get("serial"),
+            "b": (sides.get("b") or {}).get("serial"),
+        },
+        "jtag_freq_hz": HW_CONFIG.get("ku", {}).get("jtag_freq_hz") or 15_000_000,
+    })
+
+
+def _ku_firmware_payload():
     bin_dir = ku_bin_dir(RESOURCES_FOLDER)
     active = current_set_name(HW_CONFIG)
     sets = list_firmware_sets(bin_dir)
-    return jsonify({
+    return {
         "sets": sets,
+        "details": list_firmware_details(bin_dir),
         "active": active,
         "active_present": bool(active and active in sets),
-    })
+    }
+
+
+@app.route("/api/ku/firmware", methods=["GET"])
+def api_list_ku_firmware():
+    return jsonify(_ku_firmware_payload())
 
 
 @app.route("/api/ku/firmware/upload", methods=["POST"])
@@ -444,6 +1046,10 @@ def api_upload_ku_firmware():
             "error": "tag is required (letters, numbers, . _ - ; max 64 chars)",
         }), 400
 
+    allow_bin_only = str(request.form.get("allow_bin_only") or "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
     uploaded = request.files.getlist("files") or []
     if not uploaded:
         # also accept named fields
@@ -453,7 +1059,7 @@ def api_upload_ku_firmware():
                 uploaded.append(value)
 
     pairs = [(f.filename, f) for f in uploaded if f and f.filename]
-    stem, result = validate_upload_files(pairs)
+    stem, result = validate_upload_files(pairs, allow_bin_only=allow_bin_only)
     if stem is None:
         return jsonify({"error": result}), 400
 
@@ -466,12 +1072,13 @@ def api_upload_ku_firmware():
     if error:
         return jsonify({"error": error}), 400
 
-    return jsonify({
+    payload = _ku_firmware_payload()
+    payload.update({
         "status": "ok",
         "set": set_name,
-        "sets": list_firmware_sets(ku_bin_dir(RESOURCES_FOLDER)),
-        "active": current_set_name(HW_CONFIG),
-    }), 201
+        "bin_only": set(result.keys()) == {"bin"},
+    })
+    return jsonify(payload), 201
 
 
 @app.route("/api/ku/firmware/download", methods=["GET"])
@@ -509,12 +1116,36 @@ def api_select_ku_firmware():
     except Exception as exc:
         return jsonify({"error": f"failed to save hw_config: {exc}"}), 500
 
-    return jsonify({
+    response = _ku_firmware_payload()
+    response.update({
         "status": "ok",
         "active": set_name,
-        "sets": list_firmware_sets(ku_bin_dir(RESOURCES_FOLDER)),
         "hw_config": HW_CONFIG,
     })
+    return jsonify(response)
+
+
+@app.route("/api/ku/firmware/delete", methods=["POST"])
+def api_delete_ku_firmware():
+    payload = request.get_json(silent=True) or {}
+    set_name = (payload.get("set") or "").strip()
+    confirm = (payload.get("confirm") or "").strip()
+
+    if not set_name:
+        return jsonify({"error": "set name is required"}), 400
+    if confirm != "delete me":
+        return jsonify({"error": 'confirmation text must be exactly "delete me"'}), 400
+
+    ok, error = delete_firmware_set(ku_bin_dir(RESOURCES_FOLDER), set_name)
+    if not ok:
+        return jsonify({"error": error}), 400
+
+    response = _ku_firmware_payload()
+    response.update({
+        "status": "ok",
+        "deleted": set_name,
+    })
+    return jsonify(response)
 
 
 @app.route("/api/component_lots", methods=["GET"])
@@ -620,31 +1251,67 @@ def _ha_entity_for_side(side):
 
 @app.route("/api/refresh_processes", methods=["POST"])
 def refresh_processes():
-    killed = []
-    for proc in psutil.process_iter(["pid", "name"]):
-        try:
-            name = proc.info["name"]
-            if name in _PROCESS_NAMES_TO_KILL:
-                os.kill(proc.info["pid"], signal.SIGTERM)
-                killed.append(name)
-        except Exception as e:
-            print(f"Error killing process {proc.info.get('name')}: {e}")
-    return jsonify({"status": "ok", "killed": killed})
+    killed = _kill_named_processes(_PROCESS_NAMES_TO_KILL)
+    return jsonify({
+        "status": "ok",
+        "killed": [item["name"] for item in killed],
+        "killed_detail": killed,
+        "counts": _count_named_processes(),
+    })
+
+
+@app.route("/api/process_status", methods=["GET"])
+def api_process_status():
+    return jsonify({
+        "status": "ok",
+        "processes": sorted(_PROCESS_NAMES_TO_KILL),
+        "counts": _count_named_processes(),
+    })
+
+
+@app.route("/api/kill_process", methods=["POST"])
+def api_kill_process():
+    payload = request.get_json(silent=True) or {}
+    name = str(payload.get("name") or "").strip()
+    if name not in _PROCESS_NAMES_TO_KILL:
+        return jsonify({
+            "error": f"unsupported process: {name}",
+            "allowed": sorted(_PROCESS_NAMES_TO_KILL),
+        }), 400
+
+    killed = _kill_named_processes({name})
+    return jsonify({
+        "status": "ok",
+        "name": name,
+        "killed": [item["name"] for item in killed],
+        "killed_detail": killed,
+        "counts": _count_named_processes(),
+    })
+
+
+@app.route("/api/restart_service", methods=["POST"])
+def api_restart_service():
+    payload = request.get_json(silent=True) or {}
+    service = str(payload.get("service") or "").strip()
+    if service not in _SERVICE_RESTART_ALLOWLIST:
+        return jsonify({
+            "error": f"unsupported service: {service}",
+            "allowed": sorted(_SERVICE_RESTART_ALLOWLIST),
+        }), 400
+
+    try:
+        service_status = _restart_local_service(service)
+    except Exception as e:
+        print(f"Error calling service restart ({service}): {e}")
+        return jsonify({"status": "error", "service": service, "error": str(e)}), 500
+
+    return jsonify({"status": "ok", "service": service, "result": service_status})
 
 
 @app.route("/api/restart_tile_wjtag", methods=["POST"])
 def restart_tile_wjtag():
     try:
-        response = requests.post(
-            "http://127.0.0.1:8081/action",
-            data={
-                "service": "tile-wjtag",
-                "action": "restart",
-            },
-            timeout=5,
-        )
-        response.raise_for_status()
-        service_status = "restarted"
+        service_status = _restart_local_service("tile-wjtag")
     except Exception as e:
         print(f"Error calling service restart: {e}")
         service_status = f"error: {e}"

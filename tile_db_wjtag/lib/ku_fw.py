@@ -30,7 +30,17 @@ def paths_for_set(bin_dir, set_name):
     }
 
 
+def existing_exts_for_set(bin_dir, set_name):
+    paths = paths_for_set(bin_dir, set_name)
+    return [ext for ext, path in paths.items() if os.path.isfile(path)]
+
+
 def set_exists(bin_dir, set_name):
+    """A firmware set exists when at least the .bin file is present."""
+    return os.path.isfile(paths_for_set(bin_dir, set_name)["bin"])
+
+
+def is_complete_set(bin_dir, set_name):
     paths = paths_for_set(bin_dir, set_name)
     return all(os.path.isfile(path) for path in paths.values())
 
@@ -53,12 +63,30 @@ def list_firmware_sets(bin_dir):
     sets = [
         stem
         for stem, exts in by_stem.items()
-        if set(KU_FW_EXTENSIONS).issubset(exts)
+        if "bin" in exts
     ]
     return sorted(sets, key=str.lower)
 
 
+def list_firmware_details(bin_dir):
+    details = {}
+    for set_name in list_firmware_sets(bin_dir):
+        exts = existing_exts_for_set(bin_dir, set_name)
+        details[set_name] = {
+            "exts": exts,
+            "complete": set(KU_FW_EXTENSIONS).issubset(exts),
+        }
+    return details
+
+
 def current_set_name(hw_config):
+    try:
+        binfile = hw_config["ku"]["sides"]["a"]["binfile"]
+    except (KeyError, TypeError):
+        binfile = None
+    name = set_name_from_path(binfile) if binfile else None
+    if name:
+        return name
     try:
         bitfile = hw_config["ku"]["sides"]["a"]["bitfile"]
     except (KeyError, TypeError):
@@ -66,10 +94,14 @@ def current_set_name(hw_config):
     return set_name_from_path(bitfile) or None
 
 
-def validate_upload_files(files):
+def validate_upload_files(files, allow_bin_only=False):
     """
     files: iterable of (filename, storage) pairs.
     Returns (stem, {ext: storage}) or (None, error).
+
+    Accepted layouts:
+      - full set: .bit + .bin + .ltx (same base name)
+      - bin-only: .bin alone (requires allow_bin_only=True)
     """
     by_ext = {}
     stems = set()
@@ -88,13 +120,23 @@ def validate_upload_files(files):
         stems.add(stem)
         by_ext[ext] = storage
 
-    missing = [ext for ext in KU_FW_EXTENSIONS if ext not in by_ext]
-    if missing:
-        return None, f"missing required files: {', '.join('.' + e for e in missing)}"
+    if not by_ext:
+        return None, "no firmware files provided"
     if len(stems) != 1:
-        return None, "all three files must share the same base name"
+        return None, "all files must share the same base name"
 
-    return next(iter(stems)), by_ext
+    provided = set(by_ext.keys())
+    if provided == set(KU_FW_EXTENSIONS):
+        return next(iter(stems)), by_ext
+
+    if provided == {"bin"}:
+        if not allow_bin_only:
+            return None, "bin-only upload requires confirmation"
+        return next(iter(stems)), by_ext
+
+    return None, (
+        "provide all of .bit .bin .ltx, or only a .bin file"
+    )
 
 
 def save_firmware_set(bin_dir, stem, tag, files_by_ext):
@@ -105,9 +147,9 @@ def save_firmware_set(bin_dir, stem, tag, files_by_ext):
     os.makedirs(bin_dir, exist_ok=True)
     saved = []
     try:
-        for ext in KU_FW_EXTENSIONS:
+        for ext, storage in files_by_ext.items():
             dest = os.path.join(bin_dir, f"{set_name}.{ext}")
-            files_by_ext[ext].save(dest)
+            storage.save(dest)
             saved.append(dest)
     except Exception as exc:
         for path in saved:
@@ -120,6 +162,30 @@ def save_firmware_set(bin_dir, stem, tag, files_by_ext):
     return set_name, None
 
 
+def delete_firmware_set(bin_dir, set_name):
+    if not set_name or "/" in set_name or "\\" in set_name or set_name in (".", ".."):
+        return False, "invalid firmware set name"
+    if not set_exists(bin_dir, set_name):
+        return False, f"firmware set not found: {set_name}"
+
+    removed = []
+    errors = []
+    for path in paths_for_set(bin_dir, set_name).values():
+        if not os.path.isfile(path):
+            continue
+        try:
+            os.remove(path)
+            removed.append(path)
+        except OSError as exc:
+            errors.append(str(exc))
+
+    if errors:
+        return False, f"failed to delete some files: {'; '.join(errors)}"
+    if not removed:
+        return False, f"firmware set not found: {set_name}"
+    return True, None
+
+
 def build_firmware_zip(bin_dir, set_name):
     if not set_exists(bin_dir, set_name):
         return None, f"firmware set not found: {set_name}"
@@ -127,7 +193,8 @@ def build_firmware_zip(bin_dir, set_name):
     buffer = BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
         for ext, path in paths_for_set(bin_dir, set_name).items():
-            archive.write(path, arcname=f"{set_name}.{ext}")
+            if os.path.isfile(path):
+                archive.write(path, arcname=f"{set_name}.{ext}")
     buffer.seek(0)
     return buffer, None
 
@@ -141,10 +208,14 @@ def apply_firmware_set(hw_config, bin_dir, set_name):
     if "a" not in sides or "b" not in sides:
         return False, "invalid KU hardware config"
 
+    bitfile = paths["bit"] if os.path.isfile(paths["bit"]) else ""
+    binfile = paths["bin"]
+    ltxfile = paths["ltx"] if os.path.isfile(paths["ltx"]) else ""
+
     for side in ("a", "b"):
-        sides[side]["bitfile"] = paths["bit"]
-        sides[side]["binfile"] = paths["bin"]
-        sides[side]["ltxfile"] = paths["ltx"]
+        sides[side]["bitfile"] = bitfile
+        sides[side]["binfile"] = binfile
+        sides[side]["ltxfile"] = ltxfile
     return True, None
 
 

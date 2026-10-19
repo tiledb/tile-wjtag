@@ -7,24 +7,25 @@
       }
     },
     "ku": {
+      "jtag_freq_hz": 15000000,
       "sides": {
         "a": {
           "serial": "210249B07199",
           "hw_server": "localhost:3121",
           "target": "xilinx_tcf/Digilent/",
           "device": "xcku035",
-          "bitfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db5v5_top_allworkingnoila_AllWorkingNoILAProdTest.bit",
-          "binfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db5v5_top_allworkingnoila_AllWorkingNoILAProdTest.bin",
-          "ltxfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db5v5_top_allworkingnoila_AllWorkingNoILAProdTest.ltx"
+          "bitfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db7_top_girdy_pretmr.bit",
+          "binfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db7_top_girdy_pretmr.bin",
+          "ltxfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db7_top_girdy_pretmr.ltx"
         },
         "b": {
           "serial": "210249A1449F",
           "hw_server": "localhost:3121",
           "target": "xilinx_tcf/Digilent/",
           "device": "xcku035",
-          "bitfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db5v5_top_allworkingnoila_AllWorkingNoILAProdTest.bit",
-          "binfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db5v5_top_allworkingnoila_AllWorkingNoILAProdTest.bin",
-          "ltxfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db5v5_top_allworkingnoila_AllWorkingNoILAProdTest.ltx"
+          "bitfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db7_top_girdy_pretmr.bit",
+          "binfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db7_top_girdy_pretmr.bin",
+          "ltxfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db7_top_girdy_pretmr.ltx"
         }
       }
     },
@@ -47,6 +48,7 @@
       }
     },
     "ku": {
+      "jtag_freq_hz": 30000000,
       "sides": {
         "a": {
           "serial": "210249B07196",

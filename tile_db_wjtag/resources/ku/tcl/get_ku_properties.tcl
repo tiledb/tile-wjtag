@@ -8,6 +8,8 @@
 
 package require json
 
+source [file join [file dirname [info script]] ku_jtag_utils.tcl]
+
 # Get and print current working directory
 set current_dir [pwd]
 puts "=== Execution Directory: $current_dir ==="
@@ -23,28 +25,27 @@ close $fp
 set data [json::json2dict $file_data]
 
 set programmers {}
+set jtag_freq_hz 0
 
 # Check if current host exists in config
 if {[dict exists $data $hostname]} {
+    set jtag_freq_hz [ku_read_jtag_freq_hz $data $hostname]
     set ku_sides [dict get $data $hostname ku sides]
     
     # Iterate through sides (a, b, etc.)
     dict for {side info} $ku_sides {
-        # Construct the internal list format used by your loop
-        lappend programmers [list \
-            hw_server [dict get $info hw_server] \
-            target    [dict get $info target] \
-            id        [dict get $info serial] \
-            device    [dict get $info device] \
-            bitfile   [dict get $info bitfile] \
-            binfile   [dict get $info binfile] \
-            ltxfile   [dict get $info ltxfile] \
-        ]
+        if {![ku_side_enabled $side]} {
+            puts "=== Skipping side $side (disabled for this session) ==="
+            continue
+        }
+        lappend programmers [ku_programmer_from_side $side $info]
     }
 } else {
     puts "Error: No configuration found for host $hostname"
     exit 1
 }
+
+puts "=== KU jtag_freq_hz from hw_config: $jtag_freq_hz ==="
 
 puts "=== Selected KU firmware ==="
 foreach p $programmers {
@@ -99,12 +100,14 @@ foreach p $programmers {
     puts "($id) Device : $dev_filter"
     puts "($id) =============================================="
 
-    # Open hardware target safely
+    # Set JTAG speed (before open), then open hardware target
+    ku_prepare_jtag_target $full_path $jtag_freq_hz $id
     if {[catch {open_hw_target $full_path -quiet} err]} {
         puts "($id) ERROR: Failed to open target $full_path: $err"
         set error_flag 1
         # continue
     }
+    ku_report_jtag_frequency $id
 
     set devices [get_hw_devices]
 
