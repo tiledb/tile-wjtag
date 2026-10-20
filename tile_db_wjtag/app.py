@@ -1,13 +1,16 @@
+import copy
 import errno
 import json
 import os
 import pty
 import re
 import shlex
+import shutil
 import signal
 import socket
 import subprocess
 from datetime import datetime
+from functools import wraps
 
 import psutil
 import requests
@@ -79,33 +82,72 @@ for folder in (
     os.makedirs(folder, exist_ok=True)
 
 VIVADO_SETTINGS = "/tools/Xilinx/Vivado_Lab/2022.2/settings64.sh"
+VIVADO_LAB_BIN = "/tools/Xilinx/Vivado_Lab/2022.2/bin/vivado_lab"
 FLASH_PRO_CMD = "/microsemi/Libero_SoC_11.10/Libero_SoC/Designer/bin/FPExpress"
+
+
+def _empty_hw_config():
+    """Minimal host config used when this machine is not yet registered."""
+    return {
+        "ha_power_control": {"sides": {"a": "", "b": ""}},
+        "ku": {
+            "jtag_freq_hz": 15_000_000,
+            "sides": {
+                "a": {
+                    "serial": "",
+                    "hw_server": "localhost:3121",
+                    "target": "xilinx_tcf/Digilent/",
+                    "device": "xcku035",
+                    "bitfile": "",
+                    "binfile": "",
+                    "ltxfile": "",
+                },
+                "b": {
+                    "serial": "",
+                    "hw_server": "localhost:3121",
+                    "target": "xilinx_tcf/Digilent/",
+                    "device": "xcku035",
+                    "bitfile": "",
+                    "binfile": "",
+                    "ltxfile": "",
+                },
+            },
+        },
+        "proasic": {
+            "sides": {
+                "a": {"programmer": ""},
+                "b": {"programmer": ""},
+            }
+        },
+    }
+
 
 with open(HW_CONFIG_PATH, "r") as f:
     ALL_HW_CONFIGS = json.load(f)
 
 HOSTNAME = socket.gethostname()
-
-HW_CONFIG = ALL_HW_CONFIGS.get(HOSTNAME)
-if HW_CONFIG is None:
-    raise RuntimeError(f"No hardware config found for hostname: {HOSTNAME}")
+HOST_REGISTERED = HOSTNAME in ALL_HW_CONFIGS
+HW_CONFIG = ALL_HW_CONFIGS.get(HOSTNAME) or _empty_hw_config()
 
 KU_SERIAL_TO_SIDE = {
-    v["serial"]: side.upper() for side, v in HW_CONFIG["ku"]["sides"].items()
+    v["serial"]: side.upper()
+    for side, v in HW_CONFIG.get("ku", {}).get("sides", {}).items()
+    if (v or {}).get("serial")
 }
 PROASIC_PROG_TO_SIDE = {
-    v["programmer"]: side.upper() for side, v in HW_CONFIG["proasic"]["sides"].items()
+    v["programmer"]: side.upper()
+    for side, v in HW_CONFIG.get("proasic", {}).get("sides", {}).items()
+    if (v or {}).get("programmer")
 }
 ha_cfg = HW_CONFIG.get("ha_power_control", {}).get("sides", {})
-
 if not isinstance(ha_cfg, dict):
-    raise RuntimeError("Invalid ha_power_control config")
+    ha_cfg = {}
 
 SIDE_TO_HA_ENTITY = {
-    side.upper(): entity for side, entity in ha_cfg.items()
+    side.upper(): entity for side, entity in ha_cfg.items() if entity
 }
 
-_KU_SERIALS = "|".join(map(re.escape, KU_SERIAL_TO_SIDE))
+_KU_SERIALS = "|".join(map(re.escape, KU_SERIAL_TO_SIDE)) or "___NO_SERIAL___"
 KU_RESULT_PATTERN = re.compile(
     rf"\(({_KU_SERIALS})\) Tile Operation (Success|Failure)!"
 )
@@ -628,6 +670,27 @@ def build_command(
 
 @app.route("/run/<action>")
 def run_action(action):
+    if not HOST_REGISTERED:
+        return (
+            f"Host '{HOSTNAME}' is not registered in hw_config.json. "
+            "Register it via Advanced options before running operations.",
+            403,
+        )
+
+    tools = _detect_tools()
+    if action in KU_ACTIONS and not tools["vivado"]["available"]:
+        return (
+            "Vivado Lab is not available on this host "
+            f"(settings={VIVADO_SETTINGS}, binary={tools['vivado']['binary']}).",
+            503,
+        )
+    if action in PROASIC_ACTIONS and not tools["fpexpress"]["available"]:
+        return (
+            "FPExpress is not available on this host "
+            f"(path={tools['fpexpress']['path']}).",
+            503,
+        )
+
     cable_a = (request.args.get("cable_a") or "").strip() or None
     cable_b = (request.args.get("cable_b") or "").strip() or None
     enable_a = _parse_bool_arg(request.args.get("enable_a"), True)
@@ -666,37 +729,234 @@ def run_action(action):
 @app.route("/api/get_hostname", methods=["GET"])
 def get_hostname():
     try:
-        return jsonify({"hostname": HOSTNAME})
+        return jsonify({
+            "hostname": HOSTNAME,
+            "host_registered": HOST_REGISTERED,
+            "tools": _detect_tools(),
+        })
     except Exception:
         return jsonify({"hostname": "Unknown Server"}), 500
 
 
+def _detect_tools():
+    """Report whether Vivado Lab / FPExpress are present on this host."""
+    vivado_settings_ok = os.path.isfile(VIVADO_SETTINGS)
+    vivado_bin = VIVADO_LAB_BIN if os.path.isfile(VIVADO_LAB_BIN) else (
+        shutil.which("vivado_lab") or ""
+    )
+    vivado_bin_ok = bool(vivado_bin) and os.path.isfile(vivado_bin)
+    fpexpress_path = FLASH_PRO_CMD if os.path.isfile(FLASH_PRO_CMD) else (
+        shutil.which("FPExpress") or shutil.which("FPExpress_bin") or ""
+    )
+    fpexpress_ok = bool(fpexpress_path) and os.access(fpexpress_path, os.X_OK)
+
+    return {
+        "vivado": {
+            "available": vivado_settings_ok and vivado_bin_ok,
+            "settings": VIVADO_SETTINGS,
+            "settings_ok": vivado_settings_ok,
+            "binary": vivado_bin or VIVADO_LAB_BIN,
+            "binary_ok": vivado_bin_ok,
+        },
+        "fpexpress": {
+            "available": fpexpress_ok,
+            "path": fpexpress_path or FLASH_PRO_CMD,
+            "path_ok": fpexpress_ok,
+        },
+    }
+
+
+def _host_status_payload():
+    return {
+        "hostname": HOSTNAME,
+        "host_registered": HOST_REGISTERED,
+        "hw_config_path": HW_CONFIG_PATH,
+        "known_hosts": sorted(ALL_HW_CONFIGS.keys()),
+        "tools": _detect_tools(),
+    }
+
+
+def _require_host_registered(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not HOST_REGISTERED:
+            return jsonify({
+                "error": (
+                    f"Host '{HOSTNAME}' is not registered in hw_config.json. "
+                    "Open Advanced options (Global unlock) to register it."
+                ),
+                "host_registered": False,
+                "hostname": HOSTNAME,
+            }), 403
+        return view(*args, **kwargs)
+
+    return wrapped
+
+
+def _default_firmware_paths():
+    """Pick a complete firmware set from resources/ku/bin if available."""
+    bin_dir = ku_bin_dir(RESOURCES_FOLDER)
+    details = list_firmware_details(bin_dir)
+    for name in list_firmware_sets(bin_dir):
+        meta = details.get(name) or {}
+        if meta.get("complete"):
+            return {
+                "bitfile": os.path.join(bin_dir, f"{name}.bit"),
+                "binfile": os.path.join(bin_dir, f"{name}.bin"),
+                "ltxfile": os.path.join(bin_dir, f"{name}.ltx"),
+            }
+    # Fall back to any .bin
+    for name in list_firmware_sets(bin_dir):
+        return {
+            "bitfile": os.path.join(bin_dir, f"{name}.bit") if os.path.isfile(os.path.join(bin_dir, f"{name}.bit")) else "",
+            "binfile": os.path.join(bin_dir, f"{name}.bin") if os.path.isfile(os.path.join(bin_dir, f"{name}.bin")) else "",
+            "ltxfile": os.path.join(bin_dir, f"{name}.ltx") if os.path.isfile(os.path.join(bin_dir, f"{name}.ltx")) else "",
+        }
+    return {"bitfile": "", "binfile": "", "ltxfile": ""}
+
+
+def _build_host_config_from_clone(clone_from=None):
+    if clone_from and clone_from in ALL_HW_CONFIGS:
+        cfg = copy.deepcopy(ALL_HW_CONFIGS[clone_from])
+    else:
+        cfg = _empty_hw_config()
+        paths = _default_firmware_paths()
+        for side in ("a", "b"):
+            cfg["ku"]["sides"][side].update(paths)
+    return cfg
+
+
+def _validate_host_config(cfg):
+    if not isinstance(cfg, dict):
+        return "host config must be an object"
+    if "ku" not in cfg or "proasic" not in cfg:
+        return "host config must include ku and proasic"
+    ku_sides = (cfg.get("ku") or {}).get("sides")
+    if not isinstance(ku_sides, dict) or "a" not in ku_sides or "b" not in ku_sides:
+        return "ku.sides must include a and b"
+    pro_sides = (cfg.get("proasic") or {}).get("sides")
+    if not isinstance(pro_sides, dict) or "a" not in pro_sides or "b" not in pro_sides:
+        return "proasic.sides must include a and b"
+    return None
+
+
+def _apply_host_field_updates(cfg, fields):
+    """Apply structured field updates onto a host config dict."""
+    cfg = copy.deepcopy(cfg)
+    if not isinstance(fields, dict):
+        return cfg
+
+    ku = cfg.setdefault("ku", {})
+    ku_sides = ku.setdefault("sides", {})
+    for side in ("a", "b"):
+        side_cfg = ku_sides.setdefault(side, {})
+        serial_key = f"ku_serial_{side}"
+        if serial_key in fields:
+            side_cfg["serial"] = str(fields.get(serial_key) or "").strip()
+        for key in ("hw_server", "target", "device", "bitfile", "binfile", "ltxfile"):
+            field_key = f"ku_{key}_{side}"
+            if field_key in fields:
+                side_cfg[key] = str(fields.get(field_key) or "").strip()
+
+    if "jtag_freq_hz" in fields:
+        try:
+            freq = int(fields.get("jtag_freq_hz"))
+            if freq in KU_JTAG_FREQ_CHOICES:
+                ku["jtag_freq_hz"] = freq
+        except (TypeError, ValueError):
+            pass
+
+    pro = cfg.setdefault("proasic", {}).setdefault("sides", {})
+    for side in ("a", "b"):
+        side_cfg = pro.setdefault(side, {})
+        key = f"proasic_programmer_{side}"
+        if key in fields:
+            side_cfg["programmer"] = str(fields.get(key) or "").strip()
+
+    ha = cfg.setdefault("ha_power_control", {}).setdefault("sides", {})
+    for side in ("a", "b"):
+        key = f"ha_entity_{side}"
+        if key in fields:
+            ha[side] = str(fields.get(key) or "").strip()
+
+    return cfg
+
+
+def _host_fields_from_config(cfg):
+    ku = (cfg or {}).get("ku") or {}
+    sides = ku.get("sides") or {}
+    pro = ((cfg or {}).get("proasic") or {}).get("sides") or {}
+    ha = ((cfg or {}).get("ha_power_control") or {}).get("sides") or {}
+    a = sides.get("a") or {}
+    b = sides.get("b") or {}
+    return {
+        "jtag_freq_hz": ku.get("jtag_freq_hz") or 15_000_000,
+        "ku_serial_a": a.get("serial") or "",
+        "ku_serial_b": b.get("serial") or "",
+        "ku_hw_server_a": a.get("hw_server") or "localhost:3121",
+        "ku_hw_server_b": b.get("hw_server") or "localhost:3121",
+        "ku_target_a": a.get("target") or "xilinx_tcf/Digilent/",
+        "ku_target_b": b.get("target") or "xilinx_tcf/Digilent/",
+        "ku_device_a": a.get("device") or "xcku035",
+        "ku_device_b": b.get("device") or "xcku035",
+        "ku_bitfile_a": a.get("bitfile") or "",
+        "ku_bitfile_b": b.get("bitfile") or "",
+        "ku_binfile_a": a.get("binfile") or "",
+        "ku_binfile_b": b.get("binfile") or "",
+        "ku_ltxfile_a": a.get("ltxfile") or "",
+        "ku_ltxfile_b": b.get("ltxfile") or "",
+        "proasic_programmer_a": (pro.get("a") or {}).get("programmer") or "",
+        "proasic_programmer_b": (pro.get("b") or {}).get("programmer") or "",
+        "ha_entity_a": ha.get("a") or "",
+        "ha_entity_b": ha.get("b") or "",
+    }
+
+
 @app.route("/api/hw_config", methods=["GET"])
 def get_hw_config():
-    return jsonify(HW_CONFIG)
+    payload = dict(HW_CONFIG) if isinstance(HW_CONFIG, dict) else {}
+    # Clients that expect a bare config still work; extras are additive.
+    return jsonify({
+        **payload,
+        "host_registered": HOST_REGISTERED,
+        "hostname": HOSTNAME,
+        "tools": _detect_tools(),
+    })
+
+
+@app.route("/api/bootstrap", methods=["GET"])
+def api_bootstrap():
+    """Single payload for UI gates: host registration + tools + config."""
+    return jsonify({
+        **_host_status_payload(),
+        "hw_config": HW_CONFIG if HOST_REGISTERED else None,
+        "host_fields": _host_fields_from_config(HW_CONFIG) if HOST_REGISTERED else _host_fields_from_config(_empty_hw_config()),
+    })
 
 
 def _reload_runtime_hw_globals():
     """Refresh in-memory maps after hw_config.json is rewritten."""
-    global HW_CONFIG, KU_SERIAL_TO_SIDE, PROASIC_PROG_TO_SIDE
+    global HW_CONFIG, HOST_REGISTERED, KU_SERIAL_TO_SIDE, PROASIC_PROG_TO_SIDE
     global SIDE_TO_HA_ENTITY, KU_RESULT_PATTERN, KU_DNA_PATTERN, _KU_SERIALS
 
-    HW_CONFIG = ALL_HW_CONFIGS.get(HOSTNAME)
-    if HW_CONFIG is None:
-        raise RuntimeError(f"No hardware config found for hostname: {HOSTNAME}")
+    HOST_REGISTERED = HOSTNAME in ALL_HW_CONFIGS
+    HW_CONFIG = ALL_HW_CONFIGS.get(HOSTNAME) or _empty_hw_config()
 
     KU_SERIAL_TO_SIDE = {
-        v["serial"]: side.upper() for side, v in HW_CONFIG["ku"]["sides"].items()
+        v["serial"]: side.upper()
+        for side, v in HW_CONFIG.get("ku", {}).get("sides", {}).items()
+        if (v or {}).get("serial")
     }
     PROASIC_PROG_TO_SIDE = {
         v["programmer"]: side.upper()
-        for side, v in HW_CONFIG["proasic"]["sides"].items()
+        for side, v in HW_CONFIG.get("proasic", {}).get("sides", {}).items()
+        if (v or {}).get("programmer")
     }
-    ha_cfg = HW_CONFIG.get("ha_power_control", {}).get("sides", {})
-    if not isinstance(ha_cfg, dict):
-        raise RuntimeError("Invalid ha_power_control config")
+    ha_cfg_local = HW_CONFIG.get("ha_power_control", {}).get("sides", {})
+    if not isinstance(ha_cfg_local, dict):
+        ha_cfg_local = {}
     SIDE_TO_HA_ENTITY = {
-        side.upper(): entity for side, entity in ha_cfg.items()
+        side.upper(): entity for side, entity in ha_cfg_local.items() if entity
     }
 
     _KU_SERIALS = "|".join(map(re.escape, KU_SERIAL_TO_SIDE)) or "___NO_SERIAL___"
@@ -730,8 +990,9 @@ def api_put_hw_config_file():
         }), 400
     if not isinstance(config.get(HOSTNAME), dict):
         return jsonify({"error": f"invalid host config for {HOSTNAME}"}), 400
-    if "ku" not in config[HOSTNAME] or "proasic" not in config[HOSTNAME]:
-        return jsonify({"error": "host config must include ku and proasic"}), 400
+    err = _validate_host_config(config[HOSTNAME])
+    if err:
+        return jsonify({"error": err}), 400
 
     ALL_HW_CONFIGS.clear()
     ALL_HW_CONFIGS.update(config)
@@ -745,9 +1006,90 @@ def api_put_hw_config_file():
         "status": "ok",
         "path": HW_CONFIG_PATH,
         "hostname": HOSTNAME,
+        "host_registered": HOST_REGISTERED,
         "config": ALL_HW_CONFIGS,
         "hw_config": HW_CONFIG,
+        "tools": _detect_tools(),
     })
+
+
+@app.route("/api/host/register", methods=["POST"])
+def api_register_host():
+    """Create (or replace) this machine's entry in hw_config.json."""
+    payload = request.get_json(silent=True) or {}
+    clone_from = (payload.get("clone_from") or "").strip() or None
+    fields = payload.get("fields") if isinstance(payload.get("fields"), dict) else {}
+    force = bool(payload.get("force"))
+
+    if HOST_REGISTERED and not force:
+        return jsonify({
+            "error": f"Host '{HOSTNAME}' is already registered. Pass force=true to replace.",
+            "host_registered": True,
+            "hostname": HOSTNAME,
+        }), 409
+
+    if clone_from and clone_from not in ALL_HW_CONFIGS:
+        return jsonify({
+            "error": f"Unknown clone source host: {clone_from}",
+            "known_hosts": sorted(ALL_HW_CONFIGS.keys()),
+        }), 400
+
+    cfg = _build_host_config_from_clone(clone_from)
+    cfg = _apply_host_field_updates(cfg, fields)
+    err = _validate_host_config(cfg)
+    if err:
+        return jsonify({"error": err}), 400
+
+    ALL_HW_CONFIGS[HOSTNAME] = cfg
+    try:
+        persist_hw_configs(HW_CONFIG_PATH, ALL_HW_CONFIGS)
+        _reload_runtime_hw_globals()
+    except Exception as exc:
+        return jsonify({"error": f"failed to save hw_config: {exc}"}), 500
+
+    return jsonify({
+        "status": "ok",
+        "message": f"Host '{HOSTNAME}' registered",
+        "hostname": HOSTNAME,
+        "host_registered": HOST_REGISTERED,
+        "hw_config": HW_CONFIG,
+        "host_fields": _host_fields_from_config(HW_CONFIG),
+        "tools": _detect_tools(),
+        "known_hosts": sorted(ALL_HW_CONFIGS.keys()),
+    })
+
+
+@app.route("/api/host/config", methods=["PUT"])
+@_require_host_registered
+def api_update_host_config():
+    """Structured update of this host's hw_config entry (advanced options)."""
+    payload = request.get_json(silent=True) or {}
+    fields = payload.get("fields") if isinstance(payload.get("fields"), dict) else payload
+    cfg = _apply_host_field_updates(HW_CONFIG, fields)
+    err = _validate_host_config(cfg)
+    if err:
+        return jsonify({"error": err}), 400
+
+    ALL_HW_CONFIGS[HOSTNAME] = cfg
+    try:
+        persist_hw_configs(HW_CONFIG_PATH, ALL_HW_CONFIGS)
+        _reload_runtime_hw_globals()
+    except Exception as exc:
+        return jsonify({"error": f"failed to save hw_config: {exc}"}), 500
+
+    return jsonify({
+        "status": "ok",
+        "hostname": HOSTNAME,
+        "host_registered": HOST_REGISTERED,
+        "hw_config": HW_CONFIG,
+        "host_fields": _host_fields_from_config(HW_CONFIG),
+        "tools": _detect_tools(),
+    })
+
+
+@app.route("/api/tools", methods=["GET"])
+def api_tools():
+    return jsonify(_host_status_payload())
 
 
 @app.route("/api/ku/advanced", methods=["GET"])
@@ -762,6 +1104,11 @@ def api_ku_advanced():
         },
         "hw_config_path": HW_CONFIG_PATH,
         "hostname": HOSTNAME,
+        "host_registered": HOST_REGISTERED,
+        "known_hosts": sorted(ALL_HW_CONFIGS.keys()),
+        "host_fields": _host_fields_from_config(HW_CONFIG),
+        "tools": _detect_tools(),
+        "hw_config": HW_CONFIG if HOST_REGISTERED else None,
     })
 
 
@@ -977,6 +1324,7 @@ def api_git_checkout():
 
 
 @app.route("/api/ku/jtag_freq", methods=["POST"])
+@_require_host_registered
 def api_set_ku_jtag_freq():
     payload = request.get_json(silent=True) or {}
     try:
@@ -1006,18 +1354,31 @@ def api_set_ku_jtag_freq():
 
 @app.route("/api/ku/cables", methods=["GET"])
 def api_list_ku_cables():
+    """List Digilent cables via Vivado. Allowed even before host registration
+    so Advanced options can fill KU serial fields during setup."""
+    tools = _detect_tools()
+    if not tools["vivado"]["available"]:
+        return jsonify({
+            "error": "Vivado Lab is not available on this host",
+            "tools": tools,
+            "cables": [],
+        }), 503
+
     cables, error = _list_ku_cables_via_vivado()
     if error:
         return jsonify({"error": error, "cables": cables or []}), 500
 
-    sides = HW_CONFIG.get("ku", {}).get("sides", {})
+    sides = (HW_CONFIG or {}).get("ku", {}).get("sides", {}) if HOST_REGISTERED else {}
     return jsonify({
         "cables": cables,
         "default_cables": {
             "a": (sides.get("a") or {}).get("serial"),
             "b": (sides.get("b") or {}).get("serial"),
         },
-        "jtag_freq_hz": HW_CONFIG.get("ku", {}).get("jtag_freq_hz") or 15_000_000,
+        "jtag_freq_hz": (
+            (HW_CONFIG or {}).get("ku", {}).get("jtag_freq_hz") if HOST_REGISTERED else None
+        ) or 15_000_000,
+        "host_registered": HOST_REGISTERED,
     })
 
 
@@ -1356,7 +1717,9 @@ def get_power_state(side):
 def toggle_power(side):
     entity_id = _ha_entity_for_side(side)
     if not entity_id:
-        return jsonify({"error": "invalid side"}), 400
+        return jsonify({
+            "error": f"HA entity for side {side} is not registered",
+        }), 400
 
     try:
         ha.call_service(

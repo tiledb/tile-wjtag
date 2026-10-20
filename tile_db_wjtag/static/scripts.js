@@ -1,78 +1,299 @@
 // Global variables
 let hwConfig = null;      // Your existing config
 let hwDetected = null;    // Detected hardware (Digilent + FlashPro)
+let hostRegistered = false;
+let stationHostname = "";
+let stationTools = { vivado: { available: false }, fpexpress: { available: false } };
+let knownHosts = [];
+let hostFields = {};
+let operationBusyGroups = { ku: false, proasic: false };
 
 async function loadHwConfig() {
     try {
-        const [configResponse, detectedResponse, hostnameResponse] = await Promise.all([
-            fetch("api/hw_config"),
+        const [bootstrapResponse, detectedResponse] = await Promise.all([
+            fetch("api/bootstrap"),
             fetch("api/detect_programmers"),
-            fetch("api/get_hostname"),
         ]);
 
-        hwConfig = await configResponse.json();
-        hwDetected = await detectedResponse.json();
-        const hostnameData = await hostnameResponse.json();
+        const bootstrap = await bootstrapResponse.json();
+        if (!bootstrapResponse.ok) {
+            throw new Error(bootstrap.error || "failed to load bootstrap");
+        }
 
-        document.getElementById("hostname-value").textContent = hostnameData.hostname;
+        applyStationBootstrap(bootstrap);
+        hwDetected = await detectedResponse.json();
+
+        document.getElementById("hostname-value").textContent = stationHostname || "Unknown";
         console.log("Loaded HW config:", hwConfig);
         console.log("Detected hardware from server:", hwDetected);
+        console.log("Host registered:", hostRegistered, "tools:", stationTools);
 
         initializeUI();
+        updateStationGates();
+        updateOperationAvailability();
     } catch (error) {
         console.error("Failed to load hardware or detected devices:", error);
         document.getElementById("hostname-value").textContent = "Unknown";
+        hostRegistered = false;
+        updateStationGates();
+        updateOperationAvailability();
+    }
+}
+
+function applyStationBootstrap(bootstrap) {
+    stationHostname = bootstrap.hostname || "";
+    hostRegistered = bootstrap.host_registered === true;
+    knownHosts = Array.isArray(bootstrap.known_hosts) ? bootstrap.known_hosts : [];
+    stationTools = bootstrap.tools || stationTools;
+    hostFields = bootstrap.host_fields || {};
+    if (bootstrap.hw_config) {
+        hwConfig = bootstrap.hw_config;
+    } else if (hostRegistered === false) {
+        // Unregistered: keep a stub so the rest of the UI does not crash.
+        hwConfig = hwConfig || {
+            ku: { jtag_freq_hz: 15000000, sides: { a: { serial: "" }, b: { serial: "" } } },
+            proasic: { sides: { a: { programmer: "" }, b: { programmer: "" } } },
+            ha_power_control: { sides: { a: "", b: "" } },
+        };
+    }
+}
+
+function isVivadoAvailable() {
+    return stationTools?.vivado?.available === true;
+}
+
+function isFpExpressAvailable() {
+    return stationTools?.fpexpress?.available === true;
+}
+
+function canRunKuOps() {
+    return (
+        hostRegistered
+        && hasAnyKuSideRegistered()
+        && isVivadoAvailable()
+        && !operationBusyGroups.ku
+    );
+}
+
+function canRunProasicOps() {
+    return (
+        hostRegistered
+        && hasAnyProasicSideRegistered()
+        && isFpExpressAvailable()
+        && !operationBusyGroups.proasic
+    );
+}
+
+function updateStationGates() {
+    const banner = document.getElementById("station-gates-banner");
+    const title = document.getElementById("station-gates-title");
+    const detail = document.getElementById("station-gates-detail");
+    const toolsLine = document.getElementById("station-tools-line");
+    const badge = document.getElementById("host-reg-badge");
+    const opsStack = document.querySelector(".operations-stack");
+
+    if (badge) {
+        badge.hidden = false;
+        badge.textContent = hostRegistered ? "registered" : "unregistered";
+        badge.classList.toggle("is-registered", hostRegistered);
+        badge.classList.toggle("is-unregistered", !hostRegistered);
+    }
+
+    if (opsStack) {
+        opsStack.classList.toggle("is-host-locked", !hostRegistered);
+    }
+
+    const vivadoOk = isVivadoAvailable();
+    const fpOk = isFpExpressAvailable();
+    const issues = [];
+
+    if (!hostRegistered) {
+        issues.push(
+            `Host "${stationHostname || "?"}" is not in hw_config.json. ` +
+            "Unlock Global → Advanced options → Register this host."
+        );
+    }
+    if (hostRegistered && !hasAnyKuSideRegistered()) {
+        issues.push("No KU cable serial registered — KU ops disabled (leave blank = Not Registered).");
+    }
+    if (hostRegistered && !hasAnyProasicSideRegistered()) {
+        issues.push("No ProASIC programmer registered — ProASIC ops disabled.");
+    }
+    if (!vivadoOk) {
+        issues.push("Vivado Lab not found — KU operation buttons stay disabled.");
+    }
+    if (!fpOk) {
+        issues.push("FPExpress not found — ProASIC operation buttons stay disabled.");
+    }
+
+    if (banner && title && detail && toolsLine) {
+        if (issues.length) {
+            banner.hidden = false;
+            banner.classList.toggle("is-error", !hostRegistered);
+            banner.classList.toggle("is-ok", false);
+            title.textContent = !hostRegistered
+                ? "Host not registered — station locked"
+                : (issues.some(i => i.includes("not found"))
+                    ? "Some tools or sides are unavailable"
+                    : "Some sides are not registered");
+            detail.textContent = issues.join(" ");
+        } else {
+            banner.hidden = true;
+        }
+        const v = stationTools?.vivado || {};
+        const f = stationTools?.fpexpress || {};
+        toolsLine.textContent =
+            `Tools: Vivado ${vivadoOk ? "OK" : "missing"}` +
+            `${v.binary ? ` (${v.binary})` : ""} · ` +
+            `FPExpress ${fpOk ? "OK" : "missing"}` +
+            `${f.path ? ` (${f.path})` : ""}`;
+    }
+
+    renderToolPills();
+}
+
+function renderToolPills() {
+    const vivadoEl = document.getElementById("ku-tools-vivado");
+    const fpEl = document.getElementById("ku-tools-fpexpress");
+    const vivadoOk = isVivadoAvailable();
+    const fpOk = isFpExpressAvailable();
+
+    if (vivadoEl) {
+        vivadoEl.textContent = `Vivado: ${vivadoOk ? "available" : "missing"}`;
+        vivadoEl.classList.toggle("is-ok", vivadoOk);
+        vivadoEl.classList.toggle("is-missing", !vivadoOk);
+        vivadoEl.title = stationTools?.vivado?.binary || "";
+    }
+    if (fpEl) {
+        fpEl.textContent = `FPExpress: ${fpOk ? "available" : "missing"}`;
+        fpEl.classList.toggle("is-ok", fpOk);
+        fpEl.classList.toggle("is-missing", !fpOk);
+        fpEl.title = stationTools?.fpexpress?.path || "";
+    }
+}
+
+function updateOperationAvailability() {
+    const kuEnabled = canRunKuOps();
+    const proEnabled = canRunProasicOps();
+
+    document.querySelectorAll('.fpga-op-btn[data-group="ku"]').forEach(btn => {
+        const forceBusy = operationBusyGroups.ku;
+        const gated = !hostRegistered || !isVivadoAvailable() || !hasAnyKuSideRegistered();
+        btn.disabled = forceBusy || !kuEnabled;
+        btn.classList.toggle("is-gated", gated);
+        if (!forceBusy) {
+            btn.classList.remove("op-busy", "btn-running");
+        }
+        btn.title = !hostRegistered
+            ? "Register this host in Advanced options first"
+            : (!hasAnyKuSideRegistered()
+                ? "No KU side registered — set a cable serial in Advanced options"
+                : (!isVivadoAvailable() ? "Vivado Lab is not available on this host" : ""));
+    });
+
+    document.querySelectorAll('.fpga-op-btn[data-group="proasic"]').forEach(btn => {
+        const forceBusy = operationBusyGroups.proasic;
+        const gated = !hostRegistered || !isFpExpressAvailable() || !hasAnyProasicSideRegistered();
+        btn.disabled = forceBusy || !proEnabled;
+        btn.classList.toggle("is-gated", gated);
+        if (!forceBusy) {
+            btn.classList.remove("op-busy", "btn-running");
+        }
+        btn.title = !hostRegistered
+            ? "Register this host in Advanced options first"
+            : (!hasAnyProasicSideRegistered()
+                ? "No ProASIC side registered — set a programmer ID in Advanced options"
+                : (!isFpExpressAvailable() ? "FPExpress is not available on this host" : ""));
+    });
+
+    ["a", "b"].forEach(side => {
+        const btn = document.getElementById(`power_${side}_btn`);
+        if (!btn) {
+            return;
+        }
+        const haOk = isHaSideRegistered(side);
+        const gated = !hostRegistered || !haOk;
+        btn.disabled = gated;
+        btn.classList.toggle("is-gated", gated);
+        if (!hostRegistered) {
+            btn.title = "Register this host before using power control";
+        } else if (!haOk) {
+            btn.title = `HA entity for side ${side.toUpperCase()} ${NOT_REGISTERED_LABEL}`;
+            if (!btn.dataset.powerLabel) {
+                btn.dataset.powerLabel = btn.innerText || "OFF";
+            }
+            btn.innerText = "N/A";
+        } else {
+            btn.title = "";
+            if (btn.innerText === "N/A" && btn.dataset.powerLabel) {
+                btn.innerText = btn.dataset.powerLabel;
+            }
+        }
+    });
+
+    updateSideRegistrationLabels();
+}
+
+function updateSideRegistrationLabels() {
+    updateKuProgrammerBoxes();
+
+    const proABox = document.getElementById("proasic_side_a_box");
+    const proBBox = document.getElementById("proasic_side_b_box");
+    if (proABox) {
+        proABox.innerText = `A: ${formatProasicSideLabel("a")}`;
+        proABox.classList.toggle("is-not-registered", !isProasicSideRegistered("a"));
+    }
+    if (proBBox) {
+        proBBox.innerText = `B: ${formatProasicSideLabel("b")}`;
+        proBBox.classList.toggle("is-not-registered", !isProasicSideRegistered("b"));
     }
 }
 
 async function updateDetectedHW() {
-    if (!hwConfig) return;
+    if (!hwConfig || !hostRegistered) return;
 
     try {
         const response = await fetch("api/detect_programmers");
         hwDetected = await response.json();
-
-        // -----------------------
-        // KU
-        // -----------------------
-        const kuABox = document.getElementById("ku_side_a_prog");
-        const kuBBox = document.getElementById("ku_side_b_prog");
+        updateSideRegistrationLabels();
 
         const detectedKU = hwDetected?.digilent?.map(dev => dev.serial) || [];
-        
+        const kuABox = document.getElementById("ku_side_a_prog");
+        const kuBBox = document.getElementById("ku_side_b_prog");
+        const serialA = getKuSideSerial("a");
+        const serialB = getKuSideSerial("b");
 
-        if (!detectedKU.includes(getKuSideSerial("a"))) {
-            kuABox.classList.add("blink-red");
-        } else {
-            kuABox.classList.remove("blink-red");
+        if (kuABox) {
+            kuABox.classList.toggle(
+                "blink-red",
+                isKuSideEnabled("a") && Boolean(serialA) && !detectedKU.includes(serialA)
+            );
+        }
+        if (kuBBox) {
+            kuBBox.classList.toggle(
+                "blink-red",
+                isKuSideEnabled("b") && Boolean(serialB) && !detectedKU.includes(serialB)
+            );
         }
 
-        if (!detectedKU.includes(getKuSideSerial("b"))) {
-            kuBBox.classList.add("blink-red");
-        } else {
-            kuBBox.classList.remove("blink-red");
-        }
-
-        // -----------------------
-        // ProASIC
-        // -----------------------
         const proABox = document.getElementById("proasic_side_a_box");
         const proBBox = document.getElementById("proasic_side_b_box");
-
         const detectedPro = hwDetected?.flashpro?.map(dev => dev.serial) || [];
+        const progA = getProasicProgrammer("a");
+        const progB = getProasicProgrammer("b");
 
-        if (!detectedPro.includes(hwConfig.proasic.sides.a.programmer)) {
-            proABox.classList.add("blink-red");
-        } else {
-            proABox.classList.remove("blink-red");
+        if (proABox) {
+            proABox.classList.toggle(
+                "blink-red",
+                isProasicSideRegistered("a") && Boolean(progA) && !detectedPro.includes(progA)
+            );
         }
-
-        if (!detectedPro.includes(hwConfig.proasic.sides.b.programmer)) {
-            proBBox.classList.add("blink-red");
-        } else {
-            proBBox.classList.remove("blink-red");
+        if (proBBox) {
+            proBBox.classList.toggle(
+                "blink-red",
+                isProasicSideRegistered("b") && Boolean(progB) && !detectedPro.includes(progB)
+            );
         }
-
     } catch (err) {
         console.error("Failed to detect hardware:", err);
     }
@@ -97,8 +318,10 @@ function initializeUI() {
 
     // ProASIC programmer -> side map
     window.proasicProgToSide = {};
-    Object.entries(hwConfig.proasic.sides).forEach(([side, data]) => {
-        proasicProgToSide[data.programmer] = side;
+    Object.entries(hwConfig?.proasic?.sides || {}).forEach(([side, data]) => {
+        if (data?.programmer) {
+            proasicProgToSide[data.programmer] = side;
+        }
     });
 
     console.log("KU serial map:", kuSerialToSide);
@@ -111,15 +334,15 @@ function initializeUI() {
 
     const kuInfo = document.getElementById("ku_config_info");
     if (kuInfo) {
-        kuInfo.innerText = Object.entries(hwConfig.ku.sides)
-            .map(([side, d]) => `Side ${side.toUpperCase()}: ${d.serial}`)
+        kuInfo.innerText = Object.entries(hwConfig?.ku?.sides || {})
+            .map(([side, d]) => `Side ${side.toUpperCase()}: ${d.serial || "—"}`)
             .join(" | ");
     }
 
     const proasicInfo = document.getElementById("proasic_config_info");
     if (proasicInfo) {
-        proasicInfo.innerText = Object.entries(hwConfig.proasic.sides)
-            .map(([side, d]) => `Side ${side.toUpperCase()}: ${d.programmer}`)
+        proasicInfo.innerText = Object.entries(hwConfig?.proasic?.sides || {})
+            .map(([side, d]) => `Side ${side.toUpperCase()}: ${d.programmer || "—"}`)
             .join(" | ");
     }
 
@@ -127,46 +350,47 @@ function initializeUI() {
     // ------------------
     // KU Boxes
     // ------------------
+    updateSideRegistrationLabels();
+
+    const detectedKU = (hwDetected?.digilent || []).map(dev => dev.serial);
     const kuABox = document.getElementById("ku_side_a_prog");
     const kuBBox = document.getElementById("ku_side_b_prog");
+    const serialA = getKuSideSerial("a");
+    const serialB = getKuSideSerial("b");
 
-    kuABox.innerText = `A: ${getKuSideSerial("a")}`;
-    kuBBox.innerText = `B: ${getKuSideSerial("b")}`;
-
-    // hwDetected.digilent contains the connected KU serials
-    const detectedKU = hwDetected.digilent.map(dev => dev.serial);    
-
-    if (!detectedKU.includes(getKuSideSerial("a"))) {
-        kuABox.classList.add("blink-red");
-    } else {
-        kuABox.classList.remove("blink-red");
+    if (kuABox) {
+        kuABox.classList.toggle(
+            "blink-red",
+            isKuSideEnabled("a") && Boolean(serialA) && !detectedKU.includes(serialA)
+        );
+    }
+    if (kuBBox) {
+        kuBBox.classList.toggle(
+            "blink-red",
+            isKuSideEnabled("b") && Boolean(serialB) && !detectedKU.includes(serialB)
+        );
     }
 
-    if (!detectedKU.includes(getKuSideSerial("b"))) {
-        kuBBox.classList.add("blink-red");
-    } else {
-        kuBBox.classList.remove("blink-red");
-    }
-    // ------------------
-    // ProASIC Boxes
-    // ------------------
     const proABox = document.getElementById("proasic_side_a_box");
     const proBBox = document.getElementById("proasic_side_b_box");
+    const progA = getProasicProgrammer("a");
+    const progB = getProasicProgrammer("b");
+    const detectedPro = (hwDetected?.flashpro || []).map(dev => dev.serial);
 
-    proABox.innerText = `A: ${hwConfig.proasic.sides.a.programmer}`;
-    proBBox.innerText = `B: ${hwConfig.proasic.sides.b.programmer}`;
-
-    // hwDetected.flashpro contains the connected ProASIC programmers
-    const detectedPro = hwDetected.flashpro.map(dev => dev.serial);
-
-    if (!detectedPro.includes(hwConfig.proasic.sides.a.programmer)) {
-        proABox.classList.add("blink-red");
+    if (proABox) {
+        proABox.classList.toggle(
+            "blink-red",
+            isProasicSideRegistered("a") && Boolean(progA) && !detectedPro.includes(progA)
+        );
     }
-    if (!detectedPro.includes(hwConfig.proasic.sides.b.programmer)) {
-        proBBox.classList.add("blink-red");
+    if (proBBox) {
+        proBBox.classList.toggle(
+            "blink-red",
+            isProasicSideRegistered("b") && Boolean(progB) && !detectedPro.includes(progB)
+        );
     }
 
-
+    updateOperationAvailability();
     console.log("UI initialized successfully.");
 }
 
@@ -218,11 +442,45 @@ let kuGitWired = false;
 let kuCableSelectSuppress = false;
 let kuCableEnableSuppress = false;
 
+const NOT_REGISTERED_LABEL = "(Not Registered)";
+
 function getKuDefaultSerial(side) {
-    return hwConfig?.ku?.sides?.[side]?.serial || "";
+    return (hwConfig?.ku?.sides?.[side]?.serial || "").trim();
+}
+
+function getProasicProgrammer(side) {
+    return (hwConfig?.proasic?.sides?.[side]?.programmer || "").trim();
+}
+
+function getHaEntity(side) {
+    return (hwConfig?.ha_power_control?.sides?.[side] || "").trim();
+}
+
+/** Persistent host-config registration (empty field = not registered). */
+function isKuSideRegistered(side) {
+    return Boolean(getKuDefaultSerial(side));
+}
+
+function isProasicSideRegistered(side) {
+    return Boolean(getProasicProgrammer(side));
+}
+
+function isHaSideRegistered(side) {
+    return Boolean(getHaEntity(side));
+}
+
+function hasAnyKuSideRegistered() {
+    return isKuSideRegistered("a") || isKuSideRegistered("b");
+}
+
+function hasAnyProasicSideRegistered() {
+    return isProasicSideRegistered("a") || isProasicSideRegistered("b");
 }
 
 function getKuSideSerial(side) {
+    if (!isKuSideRegistered(side)) {
+        return "";
+    }
     const override = kuSessionCableOverrides[side];
     if (override) {
         return override;
@@ -231,11 +489,30 @@ function getKuSideSerial(side) {
 }
 
 function isKuSideEnabled(side) {
+    // Unregistered sides cannot participate in KU ops.
+    if (!isKuSideRegistered(side)) {
+        return false;
+    }
     return kuSessionCableEnabled[side] !== false;
 }
 
 function getKuEnabledSides() {
     return ["a", "b"].filter(isKuSideEnabled);
+}
+
+function formatKuSideLabel(side) {
+    if (!isKuSideRegistered(side)) {
+        return NOT_REGISTERED_LABEL;
+    }
+    const serial = getKuSideSerial(side) || "---";
+    return isKuSideEnabled(side) ? serial : `${serial} (off)`;
+}
+
+function formatProasicSideLabel(side) {
+    if (!isProasicSideRegistered(side)) {
+        return NOT_REGISTERED_LABEL;
+    }
+    return getProasicProgrammer(side);
 }
 
 function rebuildKuRuntimeMaps() {
@@ -294,14 +571,16 @@ function setKuGitStatus(message, isError = false) {
 function updateKuProgrammerBoxes() {
     const kuABox = document.getElementById("ku_side_a_prog");
     const kuBBox = document.getElementById("ku_side_b_prog");
-    if (!kuABox || !kuBBox || !hwConfig?.ku?.sides) {
+    if (!kuABox || !kuBBox) {
         return;
     }
 
     const serialA = getKuSideSerial("a");
     const serialB = getKuSideSerial("b");
-    kuABox.innerText = isKuSideEnabled("a") ? (serialA || "---") : `${serialA || "---"} (off)`;
-    kuBBox.innerText = isKuSideEnabled("b") ? (serialB || "---") : `${serialB || "---"} (off)`;
+    kuABox.innerText = formatKuSideLabel("a");
+    kuBBox.innerText = formatKuSideLabel("b");
+    kuABox.classList.toggle("is-not-registered", !isKuSideRegistered("a"));
+    kuBBox.classList.toggle("is-not-registered", !isKuSideRegistered("b"));
 
     const parentA = kuABox.closest(".id-box") || kuABox.parentElement;
     const parentB = kuBBox.closest(".id-box") || kuBBox.parentElement;
@@ -311,12 +590,14 @@ function updateKuProgrammerBoxes() {
             "blink-red",
             isKuSideEnabled("a") && Boolean(serialA) && !detectedKU.includes(serialA)
         );
+        parentA.classList.toggle("is-not-registered", !isKuSideRegistered("a"));
     }
     if (parentB) {
         parentB.classList.toggle(
             "blink-red",
             isKuSideEnabled("b") && Boolean(serialB) && !detectedKU.includes(serialB)
         );
+        parentB.classList.toggle("is-not-registered", !isKuSideRegistered("b"));
     }
 }
 
@@ -391,28 +672,43 @@ function syncKuCableEnableCheckboxes() {
     const enableB = document.getElementById("ku-cable-b-enable");
     const cableA = document.getElementById("ku-cable-a-select");
     const cableB = document.getElementById("ku-cable-b-select");
+    const unlocked = globalEditUnlocked === true;
 
     kuCableEnableSuppress = true;
-    if (enableA) enableA.checked = isKuSideEnabled("a");
-    if (enableB) enableB.checked = isKuSideEnabled("b");
+    if (enableA) {
+        enableA.checked = isKuSideEnabled("a");
+        enableA.disabled = !unlocked || !isKuSideRegistered("a");
+        enableA.title = isKuSideRegistered("a") ? "" : `Side A ${NOT_REGISTERED_LABEL}`;
+    }
+    if (enableB) {
+        enableB.checked = isKuSideEnabled("b");
+        enableB.disabled = !unlocked || !isKuSideRegistered("b");
+        enableB.title = isKuSideRegistered("b") ? "" : `Side B ${NOT_REGISTERED_LABEL}`;
+    }
     kuCableEnableSuppress = false;
 
     if (cableA) {
-        cableA.disabled = !globalEditUnlocked || !isKuSideEnabled("a");
+        cableA.disabled = !unlocked || !isKuSideEnabled("a");
         cableA.classList.toggle("is-cable-disabled", !isKuSideEnabled("a"));
     }
     if (cableB) {
-        cableB.disabled = !globalEditUnlocked || !isKuSideEnabled("b");
+        cableB.disabled = !unlocked || !isKuSideEnabled("b");
         cableB.classList.toggle("is-cable-disabled", !isKuSideEnabled("b"));
     }
 }
 
 function applyKuCableEnabled(side, enabled) {
+    if (!isKuSideRegistered(side)) {
+        syncKuCableEnableCheckboxes();
+        setKuAdvancedStatus(`Cable ${side.toUpperCase()} ${NOT_REGISTERED_LABEL}`, true);
+        return false;
+    }
+
     const next = Boolean(enabled);
     const other = side === "a" ? "b" : "a";
     if (!next && !isKuSideEnabled(other)) {
         syncKuCableEnableCheckboxes();
-        setKuAdvancedStatus("At least one cable must stay enabled", true);
+        setKuAdvancedStatus("At least one registered cable must stay enabled", true);
         return false;
     }
 
@@ -439,7 +735,8 @@ async function forceDefaultKuSessionOptions() {
             "ARE YOU SURE?\n\n" +
             "This restores non-persistent Advanced options:\n" +
             "- Cable A/B selection → hw_config defaults\n" +
-            "- Cable enable checkboxes → both enabled\n\n" +
+            "- Cable enable checkboxes → registered sides enabled\n\n" +
+            "Unregistered sides stay (Not Registered).\n" +
             "JTAG speed and hw_config.json are not changed.",
         phrase: "CHANGE",
         irreversible: false,
@@ -449,17 +746,21 @@ async function forceDefaultKuSessionOptions() {
     }
 
     kuSessionCableOverrides = { a: null, b: null };
-    kuSessionCableEnabled = { a: true, b: true };
+    kuSessionCableEnabled = {
+        a: isKuSideRegistered("a"),
+        b: isKuSideRegistered("b"),
+    };
     rebuildKuRuntimeMaps();
     updateKuProgrammerBoxes();
     renderKuCableSelects();
     syncKuCableEnableCheckboxes();
     updateKuAdvancedControls();
-    setKuAdvancedStatus("Session options restored to defaults (both cables enabled)");
+    setKuAdvancedStatus("Session options restored to defaults (registered cables enabled)");
 }
 
 function updateKuAdvancedControls() {
     const unlocked = globalEditUnlocked === true;
+    const registered = hostRegistered === true;
     const settingsBtn = document.getElementById("ku-advanced-settings-btn");
     const gitBtn = document.getElementById("ku-git-settings-btn");
     const freqSelect = document.getElementById("ku-jtag-freq-select");
@@ -478,14 +779,26 @@ function updateKuAdvancedControls() {
     const gitUpdateBtn = document.getElementById("ku-git-update-btn");
     const gitRestartBtn = document.getElementById("ku-git-restart-btn");
     const gitSelect = document.getElementById("ku-git-commit-select");
+    const hostRegStatus = document.getElementById("ku-host-reg-status");
+    const hostCloneSelect = document.getElementById("ku-host-clone-select");
+    const hostRegisterBtn = document.getElementById("ku-host-register-btn");
+    const hostSaveBtn = document.getElementById("ku-host-save-fields-btn");
+    const toolsRefreshBtn = document.getElementById("ku-tools-refresh-btn");
+    const hostFieldIds = [
+        "ku-host-serial-a", "ku-host-serial-b",
+        "ku-host-proasic-a", "ku-host-proasic-b",
+        "ku-host-ha-a", "ku-host-ha-b",
+        "ku-host-hwserver-a", "ku-host-hwserver-b",
+    ];
 
+    // Advanced gear is always reachable when Global is unlocked — needed to register a new host.
     if (settingsBtn) {
         settingsBtn.hidden = !unlocked;
         settingsBtn.disabled = !unlocked;
     }
     if (gitBtn) {
-        gitBtn.hidden = !unlocked;
-        gitBtn.disabled = !unlocked;
+        gitBtn.hidden = !unlocked || !registered;
+        gitBtn.disabled = !unlocked || !registered;
     }
 
     if (!unlocked) {
@@ -499,11 +812,72 @@ function updateKuAdvancedControls() {
         }
     }
 
-    if (freqSelect) freqSelect.disabled = !unlocked;
-    if (enableA) enableA.disabled = !unlocked;
-    if (enableB) enableB.disabled = !unlocked;
-    if (refreshBtn) refreshBtn.disabled = !unlocked;
-    if (defaultsBtn) defaultsBtn.disabled = !unlocked;
+    if (hostRegStatus) {
+        hostRegStatus.textContent = registered
+            ? `${stationHostname} — registered`
+            : `${stationHostname || "?"} — NOT registered`;
+    }
+
+    if (hostCloneSelect) {
+        const previous = hostCloneSelect.value;
+        hostCloneSelect.innerHTML = "";
+        const blank = document.createElement("option");
+        blank.value = "";
+        blank.textContent = "Blank defaults";
+        hostCloneSelect.appendChild(blank);
+        knownHosts
+            .filter(h => h !== stationHostname)
+            .forEach(h => {
+                const opt = document.createElement("option");
+                opt.value = h;
+                opt.textContent = h;
+                hostCloneSelect.appendChild(opt);
+            });
+        if ([...hostCloneSelect.options].some(o => o.value === previous)) {
+            hostCloneSelect.value = previous;
+        }
+        hostCloneSelect.disabled = !unlocked || registered;
+    }
+    if (hostRegisterBtn) {
+        hostRegisterBtn.disabled = !unlocked || registered;
+        hostRegisterBtn.hidden = registered;
+        hostRegisterBtn.textContent = registered ? "Host registered" : "Register this host";
+    }
+    const registerRow = document.getElementById("ku-host-register-row");
+    if (registerRow) {
+        registerRow.hidden = registered;
+    }
+
+    hostFieldIds.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.disabled = !unlocked;
+        }
+    });
+    if (hostSaveBtn) {
+        hostSaveBtn.disabled = !unlocked || !registered;
+        hostSaveBtn.title = registered
+            ? "Save structured host options to hw_config.json"
+            : "Register the host first, then save options";
+    }
+    if (toolsRefreshBtn) {
+        toolsRefreshBtn.disabled = !unlocked;
+    }
+    renderToolPills();
+
+    // Session / service controls require a registered host.
+    const hostReady = unlocked && registered;
+    if (freqSelect) freqSelect.disabled = !hostReady;
+    if (enableA) enableA.disabled = !hostReady;
+    if (enableB) enableB.disabled = !hostReady;
+    // Cable scan only needs Vivado — useful while registering host serials.
+    if (refreshBtn) {
+        refreshBtn.disabled = !unlocked || !isVivadoAvailable();
+        refreshBtn.title = !isVivadoAvailable()
+            ? "Vivado Lab is not available"
+            : "Scan Digilent cables via Vivado (fills blank KU serial fields)";
+    }
+    if (defaultsBtn) defaultsBtn.disabled = !hostReady;
     if (restartHwserverBtn) restartHwserverBtn.disabled = !unlocked;
     if (restartTileBtn) restartTileBtn.disabled = !unlocked;
     if (procRefreshBtn) procRefreshBtn.disabled = !unlocked;
@@ -530,12 +904,174 @@ function updateKuAdvancedControls() {
         editor.classList.toggle("is-editing", kuHwConfigFileEditing);
     }
 
-    const gitReady = unlocked && !kuGitBusy;
+    const gitReady = unlocked && registered && !kuGitBusy;
     if (gitRefreshBtn) gitRefreshBtn.disabled = !gitReady;
     if (gitSelect) gitSelect.disabled = !gitReady;
     if (gitRestartBtn) gitRestartBtn.disabled = !gitReady;
     if (gitUpdateBtn) {
         gitUpdateBtn.disabled = !gitReady || !(gitSelect && gitSelect.value);
+    }
+}
+
+function fillHostFieldsForm(fields) {
+    const map = {
+        "ku-host-proasic-a": fields.proasic_programmer_a,
+        "ku-host-proasic-b": fields.proasic_programmer_b,
+        "ku-host-ha-a": fields.ha_entity_a,
+        "ku-host-ha-b": fields.ha_entity_b,
+        "ku-host-hwserver-a": fields.ku_hw_server_a,
+        "ku-host-hwserver-b": fields.ku_hw_server_b,
+    };
+    Object.entries(map).forEach(([id, value]) => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.value = value || "";
+        }
+    });
+
+    // Seed KU serial selects so saved values survive option rebuild.
+    ["a", "b"].forEach(side => {
+        const pick = document.getElementById(`ku-host-serial-${side}`);
+        const serial = (fields[`ku_serial_${side}`] || "").trim();
+        if (!pick) {
+            return;
+        }
+        pick.innerHTML = "";
+        const blank = document.createElement("option");
+        blank.value = "";
+        blank.textContent = "(Not Registered)";
+        pick.appendChild(blank);
+        if (serial) {
+            const opt = document.createElement("option");
+            opt.value = serial;
+            opt.textContent = serial;
+            pick.appendChild(opt);
+            pick.value = serial;
+        }
+    });
+    renderKuHostSerialPickers();
+}
+
+function collectHostFieldsForm() {
+    return {
+        ku_serial_a: document.getElementById("ku-host-serial-a")?.value?.trim() || "",
+        ku_serial_b: document.getElementById("ku-host-serial-b")?.value?.trim() || "",
+        proasic_programmer_a: document.getElementById("ku-host-proasic-a")?.value?.trim() || "",
+        proasic_programmer_b: document.getElementById("ku-host-proasic-b")?.value?.trim() || "",
+        ha_entity_a: document.getElementById("ku-host-ha-a")?.value?.trim() || "",
+        ha_entity_b: document.getElementById("ku-host-ha-b")?.value?.trim() || "",
+        ku_hw_server_a: document.getElementById("ku-host-hwserver-a")?.value?.trim() || "localhost:3121",
+        ku_hw_server_b: document.getElementById("ku-host-hwserver-b")?.value?.trim() || "localhost:3121",
+        jtag_freq_hz: Number(document.getElementById("ku-jtag-freq-select")?.value) || hostFields.jtag_freq_hz || 15000000,
+    };
+}
+
+async function registerCurrentHost() {
+    if (!globalEditUnlocked) {
+        return;
+    }
+    if (hostRegistered) {
+        setKuAdvancedStatus("Host is already registered", true);
+        return;
+    }
+    const cloneFrom = document.getElementById("ku-host-clone-select")?.value || "";
+    const fields = collectHostFieldsForm();
+    setKuAdvancedStatus(
+        cloneFrom
+            ? `Registering host from clone of ${cloneFrom}...`
+            : "Registering host with blank defaults..."
+    );
+    try {
+        const res = await fetch("api/host/register", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ clone_from: cloneFrom || null, fields }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            throw new Error(data.error || "failed to register host");
+        }
+        applyStationBootstrap({
+            hostname: data.hostname,
+            host_registered: data.host_registered,
+            known_hosts: data.known_hosts,
+            tools: data.tools,
+            host_fields: data.host_fields,
+            hw_config: data.hw_config,
+        });
+        fillHostFieldsForm(hostFields);
+        if (hwConfig) {
+            initializeUI();
+        }
+        updateStationGates();
+        updateOperationAvailability();
+        updateKuAdvancedControls();
+        setKuAdvancedStatus(data.message || "Host registered");
+        await loadKuAdvancedOptions();
+    } catch (err) {
+        console.error("Failed to register host:", err);
+        setKuAdvancedStatus(err.message || "failed to register host", true);
+    }
+}
+
+async function saveHostFields() {
+    if (!globalEditUnlocked || !hostRegistered) {
+        return;
+    }
+    const fields = collectHostFieldsForm();
+    setKuAdvancedStatus("Saving host options...");
+    try {
+        const res = await fetch("api/host/config", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ fields }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            throw new Error(data.error || "failed to save host options");
+        }
+        applyStationBootstrap({
+            hostname: data.hostname || stationHostname,
+            host_registered: data.host_registered,
+            known_hosts: knownHosts,
+            tools: data.tools || stationTools,
+            host_fields: data.host_fields,
+            hw_config: data.hw_config,
+        });
+        fillHostFieldsForm(hostFields);
+        if (hwConfig) {
+            rebuildKuRuntimeMaps();
+            updateKuProgrammerBoxes();
+            renderKuCableSelects();
+        }
+        updateStationGates();
+        updateOperationAvailability();
+        updateKuAdvancedControls();
+        setKuAdvancedStatus("Host options saved");
+    } catch (err) {
+        console.error("Failed to save host options:", err);
+        setKuAdvancedStatus(err.message || "failed to save host options", true);
+    }
+}
+
+async function refreshStationTools() {
+    try {
+        const res = await fetch("api/tools");
+        const data = await res.json();
+        if (!res.ok) {
+            throw new Error(data.error || "failed to refresh tools");
+        }
+        stationTools = data.tools || stationTools;
+        hostRegistered = data.host_registered === true;
+        knownHosts = Array.isArray(data.known_hosts) ? data.known_hosts : knownHosts;
+        stationHostname = data.hostname || stationHostname;
+        updateStationGates();
+        updateOperationAvailability();
+        updateKuAdvancedControls();
+        setKuAdvancedStatus("Tool availability refreshed");
+    } catch (err) {
+        console.error("Failed to refresh tools:", err);
+        setKuAdvancedStatus(err.message || "failed to refresh tools", true);
     }
 }
 
@@ -571,25 +1107,20 @@ function renderKuCableSelects() {
     const defaultB = getKuDefaultSerial("b");
     const selectedA = getKuSideSerial("a");
     const selectedB = getKuSideSerial("b");
-
-    const serials = new Set();
-    if (defaultA) serials.add(defaultA);
-    if (defaultB) serials.add(defaultB);
-    kuDiscoveredCables.forEach(cable => {
-        if (cable?.serial) serials.add(cable.serial);
-    });
-    if (selectedA) serials.add(selectedA);
-    if (selectedB) serials.add(selectedB);
+    const serials = collectKuSerialChoices();
+    if (selectedA && !serials.includes(selectedA)) serials.push(selectedA);
+    if (selectedB && !serials.includes(selectedB)) serials.push(selectedB);
+    serials.sort((a, b) => a.localeCompare(b));
 
     const buildOptions = (select, selected, defaultSerial) => {
         select.innerHTML = "";
-        Array.from(serials).sort((a, b) => a.localeCompare(b)).forEach(serial => {
+        serials.forEach(serial => {
             const option = document.createElement("option");
             option.value = serial;
             option.textContent = serial === defaultSerial ? `${serial} (default)` : serial;
             select.appendChild(option);
         });
-        if (selected && serials.has(selected)) {
+        if (selected && serials.includes(selected)) {
             select.value = selected;
         } else if (defaultSerial) {
             select.value = defaultSerial;
@@ -600,6 +1131,7 @@ function renderKuCableSelects() {
     buildOptions(selectA, selectedA, defaultA);
     buildOptions(selectB, selectedB, defaultB);
     kuCableSelectSuppress = false;
+    renderKuHostSerialPickers();
 }
 
 function applyKuCableSelection(side, serial) {
@@ -943,6 +1475,25 @@ async function loadKuAdvancedOptions() {
         if (!res.ok) {
             throw new Error(data.error || "failed to load advanced options");
         }
+        if (Object.prototype.hasOwnProperty.call(data, "host_registered")) {
+            hostRegistered = data.host_registered === true;
+        }
+        if (data.hostname) {
+            stationHostname = data.hostname;
+        }
+        if (Array.isArray(data.known_hosts)) {
+            knownHosts = data.known_hosts;
+        }
+        if (data.tools) {
+            stationTools = data.tools;
+        }
+        if (data.host_fields) {
+            hostFields = data.host_fields;
+            fillHostFieldsForm(hostFields);
+        }
+        if (data.hw_config) {
+            hwConfig = data.hw_config;
+        }
         kuJtagFreqChoices = data.jtag_freq_choices || [];
         renderKuJtagFreqSelect(data.jtag_freq_hz);
         renderKuCableSelects();
@@ -953,6 +1504,8 @@ async function loadKuAdvancedOptions() {
         }
         await loadKuHwConfigFile();
         await loadKuProcessStatus();
+        updateStationGates();
+        updateOperationAvailability();
         updateKuAdvancedControls();
     } catch (err) {
         console.error("Failed to load KU advanced options:", err);
@@ -988,8 +1541,103 @@ async function saveKuJtagFrequency(freqHz) {
     }
 }
 
+function collectKuSerialChoices() {
+    const serials = new Set();
+    const defaultA = getKuDefaultSerial("a");
+    const defaultB = getKuDefaultSerial("b");
+    if (defaultA) serials.add(defaultA);
+    if (defaultB) serials.add(defaultB);
+    (kuDiscoveredCables || []).forEach(cable => {
+        const serial = (typeof cable === "string" ? cable : (cable?.serial || "")).trim();
+        if (serial) serials.add(serial);
+    });
+    ["ku-host-serial-a", "ku-host-serial-b"].forEach(id => {
+        const value = document.getElementById(id)?.value?.trim();
+        if (value) serials.add(value);
+    });
+    return Array.from(serials).sort((a, b) => a.localeCompare(b));
+}
+
+function renderKuHostSerialPickers() {
+    const serials = collectKuSerialChoices();
+    ["a", "b"].forEach(side => {
+        const pick = document.getElementById(`ku-host-serial-${side}`);
+        if (!pick) {
+            return;
+        }
+        const current = (pick.value || "").trim();
+        pick.innerHTML = "";
+        const blank = document.createElement("option");
+        blank.value = "";
+        blank.textContent = "(Not Registered)";
+        pick.appendChild(blank);
+
+        serials.forEach(serial => {
+            const opt = document.createElement("option");
+            opt.value = serial;
+            const discovered = (kuDiscoveredCables || []).some(c =>
+                ((typeof c === "string" ? c : c?.serial) || "").trim() === serial
+            );
+            opt.textContent = discovered ? serial : `${serial} (saved)`;
+            pick.appendChild(opt);
+        });
+
+        if (current && !serials.includes(current)) {
+            const opt = document.createElement("option");
+            opt.value = current;
+            opt.textContent = `${current} (saved)`;
+            pick.appendChild(opt);
+        }
+        pick.value = current;
+        if (pick.value !== current) {
+            pick.value = "";
+        }
+    });
+}
+
+function applyDiscoveredCablesToHostSerialFields(cables) {
+    // Rebuild dropdowns with the full Vivado list; only set blank sides.
+    const serials = (cables || [])
+        .map(c => (typeof c === "string" ? c : (c?.serial || "")).trim())
+        .filter(Boolean);
+
+    const fieldA = document.getElementById("ku-host-serial-a");
+    const fieldB = document.getElementById("ku-host-serial-b");
+    const prevA = fieldA?.value?.trim() || "";
+    const prevB = fieldB?.value?.trim() || "";
+    const filled = [];
+
+    renderKuHostSerialPickers();
+
+    if (!serials.length) {
+        return filled;
+    }
+
+    if (fieldA && !prevA && serials[0]) {
+        fieldA.value = serials[0];
+        filled.push(`A=${serials[0]}`);
+    } else if (fieldA) {
+        fieldA.value = prevA;
+    }
+    if (fieldB && !prevB) {
+        const forB = serials.find(s => s !== (fieldA?.value || "").trim()) || serials[1];
+        if (forB) {
+            fieldB.value = forB;
+            filled.push(`B=${forB}`);
+        }
+    } else if (fieldB) {
+        fieldB.value = prevB;
+    }
+    renderKuHostSerialPickers();
+    return filled;
+}
+
 async function refreshKuCablesFromVivado() {
     if (!globalEditUnlocked) {
+        return;
+    }
+    if (!isVivadoAvailable()) {
+        setKuAdvancedStatus("Vivado Lab is not available on this host", true);
         return;
     }
     const refreshBtn = document.getElementById("ku-cables-refresh-btn");
@@ -1006,11 +1654,19 @@ async function refreshKuCablesFromVivado() {
         }
         kuDiscoveredCables = data.cables || [];
         renderKuCableSelects();
-        setKuAdvancedStatus(
-            kuDiscoveredCables.length
-                ? `Found ${kuDiscoveredCables.length} cable(s) via Vivado`
-                : "No Digilent cables reported by Vivado"
-        );
+        const filled = applyDiscoveredCablesToHostSerialFields(kuDiscoveredCables);
+        if (!kuDiscoveredCables.length) {
+            setKuAdvancedStatus("No Digilent cables reported by Vivado");
+        } else if (filled.length) {
+            setKuAdvancedStatus(
+                `Found ${kuDiscoveredCables.length} cable(s); filled blank host serial(s): ${filled.join(", ")}`
+            );
+        } else {
+            setKuAdvancedStatus(
+                `Found ${kuDiscoveredCables.length} cable(s) via Vivado ` +
+                "(host serial fields already set — edit them or clear to auto-fill)"
+            );
+        }
     } catch (err) {
         console.error("Failed to list KU cables:", err);
         setKuAdvancedStatus(err.message || "failed to list cables", true);
@@ -1052,6 +1708,16 @@ async function saveKuHwConfigFile() {
         if (data.hw_config) {
             hwConfig = data.hw_config;
         }
+        if (Object.prototype.hasOwnProperty.call(data, "host_registered")) {
+            hostRegistered = data.host_registered === true;
+        }
+        if (data.tools) {
+            stationTools = data.tools;
+        }
+        if (data.hostname) {
+            stationHostname = data.hostname;
+        }
+        knownHosts = Object.keys(data.config || parsed || {});
         kuHwConfigFileEditing = false;
         if (editor) {
             editor.value = kuHwConfigFileText;
@@ -1060,6 +1726,8 @@ async function saveKuHwConfigFile() {
         updateKuProgrammerBoxes();
         renderKuCableSelects();
         renderKuJtagFreqSelect(hwConfig?.ku?.jtag_freq_hz);
+        updateStationGates();
+        updateOperationAvailability();
         updateKuAdvancedControls();
         setKuAdvancedStatus("hw_config.json saved");
     } catch (err) {
@@ -1275,6 +1943,24 @@ function initKuAdvancedOptions() {
             setKuAdvancedStatus("Process counts updated");
         });
     }
+
+    const hostRegisterBtn = document.getElementById("ku-host-register-btn");
+    const hostSaveBtn = document.getElementById("ku-host-save-fields-btn");
+    const toolsRefreshBtn = document.getElementById("ku-tools-refresh-btn");
+    if (hostRegisterBtn && !hostRegisterBtn.dataset.wired) {
+        hostRegisterBtn.addEventListener("click", registerCurrentHost);
+        hostRegisterBtn.dataset.wired = "true";
+    }
+    if (hostSaveBtn && !hostSaveBtn.dataset.wired) {
+        hostSaveBtn.addEventListener("click", saveHostFields);
+        hostSaveBtn.dataset.wired = "true";
+    }
+    if (toolsRefreshBtn && !toolsRefreshBtn.dataset.wired) {
+        toolsRefreshBtn.addEventListener("click", refreshStationTools);
+        toolsRefreshBtn.dataset.wired = "true";
+    }
+    renderKuHostSerialPickers();
+
     document.querySelectorAll(".ku-kill-proc-btn").forEach(btn => {
         btn.addEventListener("click", () => {
             killKuNamedProcess(btn.dataset.proc);
@@ -3824,16 +4510,23 @@ function initKuFirmwareControls() {
 }
 
 function setFpgaGroupButtonsDisabled(group, disabled, activeAction = null) {
+    operationBusyGroups[group] = Boolean(disabled);
+
+    if (!disabled) {
+        updateOperationAvailability();
+        return;
+    }
+
     document.querySelectorAll(`.fpga-op-btn[data-group="${group}"]`).forEach(btn => {
-        btn.disabled = Boolean(disabled);
-        btn.classList.toggle("op-busy", Boolean(disabled));
+        btn.disabled = true;
+        btn.classList.toggle("op-busy", true);
 
         const isActiveButton = Boolean(
             activeAction
             && btn.getAttribute("onclick")
             && btn.getAttribute("onclick").includes(`'${activeAction}'`)
         );
-        btn.classList.toggle("btn-running", Boolean(disabled) && isActiveButton);
+        btn.classList.toggle("btn-running", isActiveButton);
     });
 }
 
@@ -3885,22 +4578,7 @@ function preflightKuFirmwareAction(action) {
 }
 
 async function startAction(action, type) {
-    lockAllEditModes(true);
-
-    // Update HW status before starting
-    await updateDetectedHW();
-
     let group = null;
-
-    if (type.includes("proasic")) {
-        resetStatusBoxesForProasicAction(action); // ✅ resets only relevant boxes
-    }
-
-    if (type.includes("ku")) {
-        resetDbBoxes();
-        resetStatusBoxesForKUAction(action);
-    }
-
     if (action.includes("ku")) {
         group = "ku";
     } else if (action.includes("proasic")) {
@@ -3910,6 +4588,50 @@ async function startAction(action, type) {
     if (!group) {
         console.warn("Unknown action group:", action);
         return;
+    }
+
+    if (!hostRegistered) {
+        alert(
+            `Host "${stationHostname || "?"}" is not registered in hw_config.json.\n\n` +
+            "Unlock Global → Advanced options → Register this host."
+        );
+        return;
+    }
+    if (group === "ku" && !hasAnyKuSideRegistered()) {
+        alert(
+            `No KU cable serial is registered.\n\n` +
+            `Leave a side blank for ${NOT_REGISTERED_LABEL}, or set at least one serial in Advanced options.`
+        );
+        return;
+    }
+    if (group === "ku" && !isVivadoAvailable()) {
+        alert("Vivado Lab is not available on this host. KU operations stay disabled.");
+        return;
+    }
+    if (group === "proasic" && !hasAnyProasicSideRegistered()) {
+        alert(
+            `No ProASIC programmer is registered.\n\n` +
+            `Leave a side blank for ${NOT_REGISTERED_LABEL}, or set at least one ID in Advanced options.`
+        );
+        return;
+    }
+    if (group === "proasic" && !isFpExpressAvailable()) {
+        alert("FPExpress is not available on this host. ProASIC operations stay disabled.");
+        return;
+    }
+
+    lockAllEditModes(true);
+
+    // Update HW status before starting
+    await updateDetectedHW();
+
+    if (type.includes("proasic")) {
+        resetStatusBoxesForProasicAction(action); // ✅ resets only relevant boxes
+    }
+
+    if (type.includes("ku")) {
+        resetDbBoxes();
+        resetStatusBoxesForKUAction(action);
     }
 
     if (group === "ku" && !preflightKuFirmwareAction(action)) {
@@ -4606,6 +5328,16 @@ function setPowerButton(side, state) {
     const btn = document.getElementById(`power_${side}_btn`);
     if (!btn) return;
 
+    if (!isHaSideRegistered(side)) {
+        btn.classList.remove("on");
+        btn.classList.add("off");
+        btn.innerText = "N/A";
+        btn.disabled = true;
+        btn.classList.add("is-gated");
+        btn.title = `HA entity for side ${String(side).toUpperCase()} ${NOT_REGISTERED_LABEL}`;
+        return;
+    }
+
     if (state === "on") {
         btn.classList.remove("off");
         btn.classList.add("on");
@@ -4631,6 +5363,17 @@ async function updatePowerStates() {
 }
 
 async function togglePower(side) {
+    if (!hostRegistered) {
+        alert(
+            `Host "${stationHostname || "?"}" is not registered.\n\n` +
+            "Register it in Advanced options before using power control."
+        );
+        return;
+    }
+    if (!isHaSideRegistered(side)) {
+        alert(`Power side ${side.toUpperCase()} ${NOT_REGISTERED_LABEL}`);
+        return;
+    }
     await fetch(`api/power_toggle/${side}`, { method: "POST" });
     setTimeout(() => updatePowerStates(), 500);
 }

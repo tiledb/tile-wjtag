@@ -1,0 +1,24 @@
+# Template for /etc/systemd/system/tile-wjtag.service
+# Installed by: ./pyenv.sh  →  Install systemd service
+# Placeholders __APP_ROOT__, __VENV_DIR__, __USER__, __GROUP__ are filled at install time.
+
+[Unit]
+Description=Tile WJTAG Service Panel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=__USER__
+Group=__GROUP__
+WorkingDirectory=__APP_ROOT__/tile_db_wjtag
+ExecStart=__VENV_DIR__/bin/python __APP_ROOT__/tile_db_wjtag/app.py
+Restart=always
+RestartSec=5
+
+Environment=PYTHONUNBUFFERED=1
+Environment=VIRTUAL_ENV=__VENV_DIR__
+Environment=PATH=__VENV_DIR__/bin:/usr/bin
+Environment=LD_LIBRARY_PATH=/usr/local/lib
+
+[Install]
+WantedBy=multi-user.target

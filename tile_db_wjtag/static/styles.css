@@ -131,6 +131,150 @@ h1 {
     flex-wrap: wrap;
 }
 
+.station-gates-banner {
+    margin: 0 0 14px;
+    padding: 12px 14px;
+    border-radius: 10px;
+    border: 1px solid #d29922;
+    background: rgba(210, 153, 34, 0.12);
+    color: #e3b341;
+}
+
+.station-gates-banner.is-error {
+    border-color: #f85149;
+    background: rgba(248, 81, 73, 0.12);
+    color: #ff7b72;
+}
+
+.station-gates-banner.is-ok {
+    border-color: #3fb950;
+    background: rgba(63, 185, 80, 0.1);
+    color: #56d364;
+}
+
+.station-gates-title {
+    font-weight: 700;
+    margin-bottom: 4px;
+}
+
+.station-gates-detail,
+.station-tools-line {
+    font-size: 0.85rem;
+    opacity: 0.95;
+}
+
+.station-tools-line {
+    margin-top: 6px;
+}
+
+.host-reg-badge {
+    margin-left: 8px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    vertical-align: middle;
+}
+
+.host-reg-badge.is-registered {
+    background: rgba(63, 185, 80, 0.2);
+    color: #56d364;
+    border: 1px solid #3fb950;
+}
+
+.host-reg-badge.is-unregistered {
+    background: rgba(248, 81, 73, 0.2);
+    color: #ff7b72;
+    border: 1px solid #f85149;
+}
+
+.tool-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.04);
+    color: #c9d1d9;
+}
+
+.tool-pill.is-ok {
+    border-color: #3fb950;
+    color: #56d364;
+    background: rgba(63, 185, 80, 0.12);
+}
+
+.tool-pill.is-missing {
+    border-color: #f85149;
+    color: #ff7b72;
+    background: rgba(248, 81, 73, 0.12);
+}
+
+.ku-advanced-host {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.ku-host-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.ku-host-serial-row .ku-host-serial-pick {
+    min-width: 160px;
+    max-width: 220px;
+}
+
+.ku-host-field-input {
+    min-width: 140px;
+    flex: 1 1 140px;
+    padding: 6px 8px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: rgba(0, 0, 0, 0.25);
+    color: #e6edf3;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.8rem;
+}
+
+.ku-host-field-input.ku-host-field-wide {
+    min-width: 220px;
+    flex: 1 1 220px;
+}
+
+.ku-host-field-input:disabled {
+    opacity: 0.55;
+}
+
+.fpga-op-btn.is-gated,
+.power-btn.is-gated {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.is-not-registered,
+.id-box.is-not-registered,
+#ku_side_a_prog.is-not-registered,
+#ku_side_b_prog.is-not-registered,
+#proasic_side_a_box.is-not-registered,
+#proasic_side_b_box.is-not-registered {
+    color: #8b949e !important;
+    font-style: italic;
+    opacity: 0.85;
+}
+
+.operations-stack.is-host-locked {
+    opacity: 0.72;
+}
+
 .ku-advanced-settings-btn {
     width: 34px;
     min-width: 34px;

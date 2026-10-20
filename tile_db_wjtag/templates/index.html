@@ -91,6 +91,64 @@
                 <button type="button" id="ku-advanced-close-btn" class="ku-advanced-close-btn" aria-label="Close advanced options">&times;</button>
             </div>
             <div class="ku-advanced-body">
+                <div class="ku-advanced-host" id="ku-advanced-host-section">
+                    <div class="ku-advanced-row">
+                        <span class="ku-advanced-label">Host registration</span>
+                        <code id="ku-host-reg-status" class="ku-advanced-path">---</code>
+                        <span class="ku-advanced-hint">required before any FPGA operation</span>
+                    </div>
+                    <div class="ku-advanced-row" id="ku-host-register-row">
+                        <label class="ku-advanced-label" for="ku-host-clone-select">Clone from</label>
+                        <select id="ku-host-clone-select" class="ku-fw-select" disabled>
+                            <option value="">Blank defaults</option>
+                        </select>
+                        <button type="button" id="ku-host-register-btn" class="db-save-btn" disabled>
+                            Register this host
+                        </button>
+                    </div>
+                    <div class="ku-host-fields">
+                        <div class="ku-advanced-row ku-host-serial-row">
+                            <span class="ku-advanced-label">KU serial A</span>
+                            <select id="ku-host-serial-a" class="ku-fw-select ku-host-serial-pick" disabled title="All cables from last Refresh">
+                                <option value="">(Not Registered)</option>
+                            </select>
+                            <span class="ku-advanced-label">KU serial B</span>
+                            <select id="ku-host-serial-b" class="ku-fw-select ku-host-serial-pick" disabled title="All cables from last Refresh">
+                                <option value="">(Not Registered)</option>
+                            </select>
+                        </div>
+                        <div class="ku-advanced-row">
+                            <span class="ku-advanced-label">ProASIC A</span>
+                            <input id="ku-host-proasic-a" class="ku-host-field-input" type="text" spellcheck="false" placeholder="blank = Not Registered" disabled>
+                            <span class="ku-advanced-label">ProASIC B</span>
+                            <input id="ku-host-proasic-b" class="ku-host-field-input" type="text" spellcheck="false" placeholder="blank = Not Registered" disabled>
+                        </div>
+                        <div class="ku-advanced-row">
+                            <span class="ku-advanced-label">HA entity A</span>
+                            <input id="ku-host-ha-a" class="ku-host-field-input ku-host-field-wide" type="text" spellcheck="false" placeholder="blank = Not Registered" disabled>
+                            <span class="ku-advanced-label">HA entity B</span>
+                            <input id="ku-host-ha-b" class="ku-host-field-input ku-host-field-wide" type="text" spellcheck="false" placeholder="blank = Not Registered" disabled>
+                        </div>
+                        <div class="ku-advanced-row">
+                            <span class="ku-advanced-label">hw_server A</span>
+                            <input id="ku-host-hwserver-a" class="ku-host-field-input" type="text" spellcheck="false" disabled>
+                            <span class="ku-advanced-label">hw_server B</span>
+                            <input id="ku-host-hwserver-b" class="ku-host-field-input" type="text" spellcheck="false" disabled>
+                            <button type="button" id="ku-host-save-fields-btn" class="db-save-btn" disabled>
+                                Save host options
+                            </button>
+                            <span class="ku-advanced-hint">leave a field blank → that side shows (Not Registered) and stays disabled</span>
+                        </div>
+                    </div>
+                    <div class="ku-advanced-row">
+                        <span class="ku-advanced-label">Tools</span>
+                        <span id="ku-tools-vivado" class="tool-pill">Vivado: ---</span>
+                        <span id="ku-tools-fpexpress" class="tool-pill">FPExpress: ---</span>
+                        <button type="button" id="ku-tools-refresh-btn" class="db-edit-btn" disabled>
+                            Recheck tools
+                        </button>
+                    </div>
+                </div>
                 <div class="ku-advanced-row">
                     <label class="ku-advanced-label" for="ku-jtag-freq-select">JTAG speed</label>
                     <select id="ku-jtag-freq-select" class="ku-fw-select" disabled></select>
@@ -113,7 +171,7 @@
                     <button type="button" id="ku-session-defaults-btn" class="db-edit-btn" disabled>
                         Force default
                     </button>
-                    <span class="ku-advanced-hint">session only — untick a side to skip it; Force default restores both cables</span>
+                    <span class="ku-advanced-hint">Refresh cables fills the KU serial dropdowns with all listed cables; enable/Force default are session-only</span>
                 </div>
                 <div class="ku-advanced-config">
                     <div class="ku-advanced-row">
@@ -222,6 +280,7 @@
             <!-- Center: hostname -->
             <div id="hostname-display" class="top-bar-box">
                 Host: <span id="hostname-value">Loading...</span>
+                <span id="host-reg-badge" class="host-reg-badge" hidden></span>
             </div>
 
             <!-- Right: refresh button -->
@@ -231,6 +290,12 @@
             <button id="restart-tile-wjtag" class="top-bar-box btn-refresh">
                 Restart Tile WJTAG
             </button>
+        </div>
+
+        <div id="station-gates-banner" class="station-gates-banner" hidden>
+            <div id="station-gates-title" class="station-gates-title"></div>
+            <div id="station-gates-detail" class="station-gates-detail"></div>
+            <div id="station-tools-line" class="station-tools-line"></div>
         </div>
 
 
@@ -331,7 +396,7 @@
 
 
                     <div class="row">
-                        <button type="button" class="fpga-op-btn" data-group="ku" onclick="startAction('get_ku_properties', 'ku')">
+                        <button type="button" class="fpga-op-btn" data-group="ku" onclick="startAction('get_ku_properties', 'ku')" disabled>
                             Get IDs for Xilinx KU
                         </button>
                         <div id="led_get_ku_properties" class="led"></div>
@@ -351,7 +416,7 @@
                     </div>
 
                     <div class="row">
-                        <button type="button" class="fpga-op-btn" data-group="ku" onclick="startAction('program_ku', 'ku_program')">
+                        <button type="button" class="fpga-op-btn" data-group="ku" onclick="startAction('program_ku', 'ku_program')" disabled>
                             Program KU FPGA
                         </button>
                         <div id="led_program_ku" class="led"></div>
@@ -373,7 +438,7 @@
 
 
                     <div class="row">
-                        <button type="button" class="fpga-op-btn" data-group="ku" onclick="startAction('program_ku_flash', 'ku_flash_program')">
+                        <button type="button" class="fpga-op-btn" data-group="ku" onclick="startAction('program_ku_flash', 'ku_flash_program')" disabled>
                             Program Xilinx KU Flash
                         </button>
                         <div id="led_program_ku_flash" class="led"></div>
@@ -395,7 +460,7 @@
 
 
                     <div class="row">
-                        <button type="button" class="fpga-op-btn" data-group="ku" onclick="startAction('verify_ku_flash', 'ku_verify')">
+                        <button type="button" class="fpga-op-btn" data-group="ku" onclick="startAction('verify_ku_flash', 'ku_verify')" disabled>
                             Verify Xilinx KU Flash
                         </button>
                         <div id="led_verify_ku_flash" class="led"></div>
@@ -415,7 +480,7 @@
 
 
                     <div class="row">
-                        <button type="button" class="fpga-op-btn" data-group="ku" onclick="startAction('erase_ku_flash', 'ku_flash_erase')">
+                        <button type="button" class="fpga-op-btn" data-group="ku" onclick="startAction('erase_ku_flash', 'ku_flash_erase')" disabled>
                             Erase KU Flash Memory
                         </button>
                         <div id="led_erase_ku_flash" class="led"></div>
@@ -437,7 +502,7 @@
 
 
                     <div class="row">
-                        <button type="button" class="fpga-op-btn" data-group="ku" onclick="startAction('blank_check_ku_flash', 'ku_flash_blank')">
+                        <button type="button" class="fpga-op-btn" data-group="ku" onclick="startAction('blank_check_ku_flash', 'ku_flash_blank')" disabled>
                             Verify KU Flash Blank
                         </button>
                         <div id="led_blank_check_ku_flash" class="led"></div>
@@ -483,7 +548,7 @@
                 <div class="left-panel">
 
                     <div class="row">
-                        <button type="button" class="fpga-op-btn" data-group="proasic" onclick="startAction('get_proasic_info', 'proasic')">
+                        <button type="button" class="fpga-op-btn" data-group="proasic" onclick="startAction('get_proasic_info', 'proasic')" disabled>
                             Get FPGA Info
                         </button>
                         <div id="led_get_proasic_info" class="led"></div>
@@ -496,7 +561,7 @@
                     </div>
 
                     <div class="row">
-                        <button type="button" class="fpga-op-btn" data-group="proasic" onclick="startAction('verify_proasic', 'proasic_verify')">Verify FPGA</button>
+                        <button type="button" class="fpga-op-btn" data-group="proasic" onclick="startAction('verify_proasic', 'proasic_verify')" disabled>Verify FPGA</button>
                         <div id="led_verify_proasic" class="led"></div>
                         <span id="timer_verify_proasic" class="elapsed-timer">00:00</span>
 
@@ -512,7 +577,7 @@
 
 
                     <div class="row">
-                        <button type="button" class="fpga-op-btn" data-group="proasic" onclick="startAction('program_proasic', 'proasic_program')">Program FPGA</button>
+                        <button type="button" class="fpga-op-btn" data-group="proasic" onclick="startAction('program_proasic', 'proasic_program')" disabled>Program FPGA</button>
                         <div id="led_program_proasic" class="led"></div>
                         <span id="timer_program_proasic" class="elapsed-timer">00:00</span>
 

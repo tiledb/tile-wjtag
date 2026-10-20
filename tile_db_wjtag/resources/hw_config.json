@@ -80,5 +80,46 @@
         }
       }
     }
+  },
+  "piro-atlas-laptop-02": {
+    "ha_power_control": {
+      "sides": {
+        "a": "",
+        "b": ""
+      }
+    },
+    "ku": {
+      "jtag_freq_hz": 15000000,
+      "sides": {
+        "a": {
+          "serial": "210249BF2C9E",
+          "hw_server": "localhost:3121",
+          "target": "xilinx_tcf/Digilent/",
+          "device": "xcku035",
+          "bitfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db7_top_gi_ecc.bit",
+          "binfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db7_top_gi_ecc.bin",
+          "ltxfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db7_top_gi_ecc.ltx"
+        },
+        "b": {
+          "serial": "210249BF2B2F",
+          "hw_server": "localhost:3121",
+          "target": "xilinx_tcf/Digilent/",
+          "device": "xcku035",
+          "bitfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db7_top_gi_ecc.bit",
+          "binfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db7_top_gi_ecc.bin",
+          "ltxfile": "/home/tiledb/apps/tile-wjtag/tile_db_wjtag/resources/ku/bin/db7_top_gi_ecc.ltx"
+        }
+      }
+    },
+    "proasic": {
+      "sides": {
+        "a": {
+          "programmer": ""
+        },
+        "b": {
+          "programmer": ""
+        }
+      }
+    }
   }
 }
